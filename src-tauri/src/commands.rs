@@ -455,11 +455,12 @@ pub async fn chat(
     session_id: String,
     channel: Channel<StreamEvent>,
     skill_names: Option<Vec<String>>,
+    continue_message_id: Option<String>,
 ) -> Result<String> {
     let provider = active_provider(&state)?;
     state.cancels.clear(&session_id);
 
-    let (history, system_prompt, enabled_skills, workspace_path, token_budget, custom_price,
+    let (mut history, system_prompt, enabled_skills, workspace_path, token_budget, custom_price,
         enable_thinking, temperature, max_tokens) = {
         let config = state.config.lock().unwrap();
         let sessions = state.sessions.lock().unwrap();
@@ -469,6 +470,17 @@ pub async fn chat(
          config.workspace_path.clone(), config.token_budget, config.cost_per_million,
          config.enable_thinking, config.temperature, config.max_tokens)
     };
+
+    // 续写模式：目标必须是最后一条被截断的 assistant 消息。
+    // 在内存里截断到该消息并追加一条临时 user 指令（不落库），让模型从中断处接着写。
+    let continuation = continue_message_id.and_then(|id| {
+        let idx = history.iter().position(|m| m.id == id && m.role == Role::Assistant)?;
+        if idx != history.len() - 1 || !history[idx].truncated { return None; }
+        let original = history[idx].clone();
+        history.truncate(idx + 1);
+        history.push(Message::user("继续写：从上面中断的地方接着完成，不要重复已经写过的部分。"));
+        Some(original)
+    });
 
     let effective_token_budget = provider.input_tokens
         .filter(|value| *value > 0)
@@ -528,7 +540,8 @@ pub async fn chat(
         .map(|message| message.content.clone())
         .unwrap_or_default();
 
-    if !user_message.trim().is_empty() {
+    // 续写模式下临时 user 指令不应触发子智能体重新规划
+    if continuation.is_none() && !user_message.trim().is_empty() {
         if let Some(tasks) = plan_subtasks(&provider, &state.http, &user_message).await {
             let outcomes = tokio::select! {
                 results = run_subagents(
@@ -593,7 +606,20 @@ pub async fn chat(
 
     let mut sessions = state.sessions.lock().unwrap();
     if let Some(session) = sessions.iter_mut().find(|s| s.id == session_id) {
-        if !answer.is_empty() || !reasoning.trim().is_empty() {
+        if let Some(orig) = continuation {
+            // 续写：把新片段合并进原截断消息，清掉/更新截断标记，不新增消息
+            if let Some(target) = session.messages.iter_mut().find(|m| m.id == orig.id) {
+                target.content = format!("{}{}", orig.content, answer);
+                if !reasoning.trim().is_empty() {
+                    let merged = match target.reasoning.as_deref() {
+                        Some(prev) if !prev.is_empty() => format!("{}\n{}", prev, reasoning),
+                        _ => reasoning.clone(),
+                    };
+                    target.reasoning = Some(merged).filter(|r| !r.trim().is_empty());
+                }
+                target.truncated = truncated;
+            }
+        } else if !answer.is_empty() || !reasoning.trim().is_empty() {
             session.messages.push(Message::assistant_with_truncated(answer.clone(), Some(reasoning), truncated));
         }
         session.usage.prompt_tokens += usage.prompt_tokens + subagent_usage.prompt_tokens;

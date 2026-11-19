@@ -50,10 +50,10 @@ export const api = {
     return !!path;
   },
 
-  chat: (sessionId: string, onEvent: (e: StreamEvent) => void, skillNames: string[] | null = null): Promise<string> => {
+  chat: (sessionId: string, onEvent: (e: StreamEvent) => void, skillNames: string[] | null = null, continueMessageId: string | null = null): Promise<string> => {
     const channel = new Channel<StreamEvent>();
     channel.onmessage = onEvent;
-    return invoke<string>('chat', { sessionId, channel, skillNames });
+    return invoke<string>('chat', { sessionId, channel, skillNames, continueMessageId });
   },
   cancelChat: (sessionId: string) => invoke<void>('cancel_chat', { sessionId }),
 

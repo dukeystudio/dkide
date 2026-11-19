@@ -236,29 +236,33 @@ export const useChatStore = defineStore('chat', () => {
     onAccepted?: () => void,
     skillNames: string[] | null = null,
     reuseLastUser = false,
+    continueMessageId: string | null = null,
   ): Promise<boolean> {
     const session = currentSession.value;
-    if (!session || isStreaming(session.id) || !content.trim()) return false;
+    if (!session || isStreaming(session.id) || (!content.trim() && !continueMessageId)) return false;
 
     const auth = useAuthStore();
     if (!auth.requireLogin('登录后才能开始对话')) return false;
     if (!requireProvider()) return false;
 
-    const userMsg: Message = {
-      id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      role: 'user',
-      content: content.trim(),
-      created_at: Math.floor(Date.now() / 1000),
-    };
-    const lastUserMessage = [...session.messages].reverse().find((message) => message.role === 'user');
-    const reuseExisting = reuseLastUser
-      && lastUserMessage?.content === content.trim()
-      && Date.now() - lastUserMessage.created_at * 1000 < 60_000;
-    if (!reuseExisting) {
-      session.messages.push(userMsg);
-      await api.appendMessage(session.id, userMsg);
-      if (session.title === '新会话') {
-        await renameSession(session.id, content.trim().slice(0, 20));
+    // 续写模式：不插入用户消息，续写指令由后端临时构造，不落库也不显示
+    if (!continueMessageId) {
+      const userMsg: Message = {
+        id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        role: 'user',
+        content: content.trim(),
+        created_at: Math.floor(Date.now() / 1000),
+      };
+      const lastUserMessage = [...session.messages].reverse().find((message) => message.role === 'user');
+      const reuseExisting = reuseLastUser
+        && lastUserMessage?.content === content.trim()
+        && Date.now() - lastUserMessage.created_at * 1000 < 60_000;
+      if (!reuseExisting) {
+        session.messages.push(userMsg);
+        await api.appendMessage(session.id, userMsg);
+        if (session.title === '新会话') {
+          await renameSession(session.id, content.trim().slice(0, 20));
+        }
       }
     }
     onAccepted?.();
@@ -348,17 +352,32 @@ export const useChatStore = defineStore('chat', () => {
             break;
           case 'done':
             finalizeRunningTools(sid, '已完成');
-            session.messages.push({
-              id: `local-a-${Date.now()}`,
-              role: 'assistant',
-              content: event.content || '（模型本轮未返回内容。）',
-              reasoning: event.reasoning || streamReasoning.value[sid] || undefined,
-              truncated: event.truncated || undefined,
-              created_at: Math.floor(Date.now() / 1000),
-            });
+            if (continueMessageId) {
+              // 续写：把新片段合并进原消息，清掉截断标记（后端落库同样合并）
+              const target = session.messages.find((m) => m.id === continueMessageId);
+              if (target) {
+                target.content = (target.content || '') + (event.content || '');
+                const extraReasoning = event.reasoning || streamReasoning.value[sid] || '';
+                if (extraReasoning.trim()) {
+                  target.reasoning = target.reasoning
+                    ? `${target.reasoning}\n${extraReasoning}`
+                    : extraReasoning;
+                }
+                target.truncated = event.truncated || undefined;
+              }
+            } else {
+              session.messages.push({
+                id: `local-a-${Date.now()}`,
+                role: 'assistant',
+                content: event.content || '（模型本轮未返回内容。）',
+                reasoning: event.reasoning || streamReasoning.value[sid] || undefined,
+                truncated: event.truncated || undefined,
+                created_at: Math.floor(Date.now() / 1000),
+              });
+            }
             break;
         }
-      }, skillNames);
+      }, skillNames, continueMessageId);
       sessions.value = await api.listSessions();
       await refreshUsage();
     } catch (e: any) {
@@ -447,18 +466,16 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
-   * 从被截断的助手消息续写：保留半截正文作为上下文，追加一条"继续"指令重新生成。
+   * 从被截断的助手消息续写：走后端续写模式，指令只在内存里临时构造，
+   * 不落库、不出现在对话里；新正文合并进原消息。
    * 仅当目标是最后一条消息时可续写（后面若有更新的用户消息，续写会打乱上下文）。
    */
   async function continueGeneration(messageIndex: number) {
     const session = currentSession.value;
     if (!session || isStreaming(session.id)) return;
     const m = session.messages[messageIndex];
-    if (!m || m.role !== 'assistant' || messageIndex !== session.messages.length - 1) return;
-    const auth = useAuthStore();
-    if (!auth.requireLogin('登录后才能继续生成')) return;
-    if (!requireProvider()) return;
-    await send('继续写：从上面中断的地方接着完成，不要重复已经写过的部分。');
+    if (!m || m.role !== 'assistant' || !m.truncated || messageIndex !== session.messages.length - 1) return;
+    await send('', undefined, null, false, m.id);
   }
 
   /**
