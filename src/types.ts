@@ -128,6 +128,19 @@ export interface ToolCallView {
   finished_at?: number;
 }
 
+export interface StreamBlock {
+  id: number;
+  task_id?: string;
+  kind: 'text' | 'reasoning' | 'tool' | 'subagent';
+  text?: string;
+  name?: string;
+  args?: string;
+  result?: string;
+  status?: 'running' | 'done' | 'error';
+  started_at: number;
+  finished_at?: number;
+}
+
 export const TEXT_ATTACHMENT_EXTENSIONS = [
   'txt', 'text', 'md', 'markdown', 'csv', 'tsv', 'json', 'jsonl', 'xml',
   'yaml', 'yml', 'toml', 'ini', 'cfg', 'conf', 'properties', 'env', 'log',
@@ -159,6 +172,9 @@ export type StreamEvent =
   | { type: 'tool'; name: string; args: string }
   | { type: 'file'; path: string; abs_path: string; kind: string }
   | { type: 'tool_result'; name: string; result: string }
+  | { type: 'sub_agent_start'; task_id: string; title: string }
+  | { type: 'sub_agent_done'; task_id: string; summary: string }
+  | { type: 'sub_agent_error'; task_id: string; message: string }
   | { type: 'approval_required'; id: string; tool: string; summary: string }
   | { type: 'usage'; prompt_tokens: number; completion_tokens: number; estimated_cost: number }
   | { type: 'cancelled' }

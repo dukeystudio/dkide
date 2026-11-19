@@ -1,19 +1,25 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use futures::stream::{self, StreamExt};
+use serde::Deserialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
-use crate::approval::PendingApproval;
+use crate::approval::{ApprovalBroker, PendingApproval};
+use crate::cancel::CancelRegistry;
 use crate::error::{AppError, Result};
 use crate::llm::{ChatEngine, StreamEvent};
 use crate::logger;
-use crate::models::{AppConfig, Message, Provider, Session, TextAttachment};
+use crate::models::{AppConfig, Message, Provider, Role, Session, TextAttachment};
 use crate::skill::Skill;
 use crate::state::AppState;
 use crate::tools::{ToolContext, ToolPolicy};
 use crate::usage::UsageStats;
 
+const SUBAGENT_MAX_TASKS: usize = 4;
+const SUBAGENT_CONCURRENCY: usize = 3;
 const MAX_TEXT_ATTACHMENT_BYTES: u64 = 5 * 1024 * 1024;
 const TEXT_ATTACHMENT_EXTENSIONS: &[&str] = &[
     "txt", "text", "md", "markdown", "csv", "tsv", "json", "jsonl", "xml",
@@ -254,6 +260,192 @@ pub fn export_session(state: State<'_, AppState>, session_id: String, path: Stri
     Ok(())
 }
 
+#[derive(Debug, Deserialize)]
+struct SubTaskPlan {
+    #[serde(default)]
+    tasks: Vec<SubTaskSpec>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SubTaskSpec {
+    #[serde(default)]
+    id: String,
+    title: String,
+    instruction: String,
+}
+
+#[derive(Debug)]
+struct SubAgentOutcome {
+    title: String,
+    summary: String,
+    usage: UsageStats,
+    error: Option<String>,
+}
+
+fn truncate_utf8_text(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let cut = text.char_indices().nth(max_chars).map(|(index, _)| index).unwrap_or(text.len());
+    format!("{}…", &text[..cut])
+}
+
+fn extract_json_object(text: &str) -> Option<&str> {
+    let trimmed = text.trim();
+    let start = trimmed.find('{')?;
+    let end = trimmed.rfind('}')?;
+    if end <= start { None } else { Some(&trimmed[start..=end]) }
+}
+
+async fn plan_subtasks(provider: &Provider, http: &reqwest::Client, user_message: &str) -> Option<Vec<SubTaskSpec>> {
+    if user_message.trim().is_empty() {
+        return None;
+    }
+    let system_prompt = format!(
+        "你是任务规划器。把用户任务拆成最多 {SUBAGENT_MAX_TASKS} 个可并行、只读分析的子任务。只输出 JSON，不要 Markdown，不要解释。如果任务简单无需拆分，输出 {{\"tasks\":[]}}。JSON 格式为 {{\"tasks\":[{{\"id\":\"t1\",\"title\":\"简短标题\",\"instruction\":\"具体只读分析指令\"}}]}}。子任务禁止写文件、禁止执行命令、禁止修改系统。"
+    );
+    let url = format!("{}/chat/completions", provider.base_url.trim_end_matches('/'));
+    let response = http.post(&url)
+        .timeout(Duration::from_secs(30))
+        .header("Authorization", format!("Bearer {}", provider.api_key))
+        .header("Content-Type", "application/json")
+        .json(&serde_json::json!({
+            "model": provider.model,
+            "messages": [
+                { "role": "system", "content": system_prompt },
+                { "role": "user", "content": user_message }
+            ],
+            "stream": false,
+            "temperature": 0.1,
+            "max_tokens": 800
+        }))
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let body: serde_json::Value = response.json().await.ok()?;
+    let content = body["choices"][0]["message"]["content"].as_str().unwrap_or_default();
+    let json_text = extract_json_object(content)?;
+    let plan: SubTaskPlan = serde_json::from_str(json_text).ok()?;
+    let mut tasks = Vec::new();
+    for (index, task) in plan.tasks.into_iter().enumerate() {
+        if task.title.trim().is_empty() || task.instruction.trim().is_empty() {
+            continue;
+        }
+        tasks.push(SubTaskSpec {
+            id: if task.id.trim().is_empty() { format!("t{}", index + 1) } else { task.id.trim().to_string() },
+            title: truncate_utf8_text(task.title.trim(), 40),
+            instruction: truncate_utf8_text(task.instruction.trim(), 1200),
+        });
+        if tasks.len() >= SUBAGENT_MAX_TASKS {
+            break;
+        }
+    }
+    if tasks.is_empty() { None } else { Some(tasks) }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_one_subagent(
+    mut provider: Provider,
+    skill_summaries: Vec<(String, String)>,
+    skill_instructions: HashMap<String, String>,
+    workspace: PathBuf,
+    approvals: ApprovalBroker,
+    cancels: CancelRegistry,
+    session_id: String,
+    http: reqwest::Client,
+    token_budget: usize,
+    custom_price: f64,
+    user_message: String,
+    task: SubTaskSpec,
+) -> Result<(String, UsageStats)> {
+    provider.reasoning_effort = None;
+    let instruction = format!(
+        "你是只读分析子智能体「{}」。\n任务：{}\n用户原始任务：{}\n限制：只能使用 read_file/list_files/activate_skill 做只读分析；禁止写文件，禁止执行命令，禁止修改任何内容。\n输出：直接给出不超过 600 字的中文摘要，列出关键发现、相关文件和主智能体需要注意的事项。不要重复任务描述。",
+        task.title, task.instruction, user_message
+    );
+    let history = vec![Message::user("请按上述要求开始只读分析，并直接输出摘要。")];
+    let tool_ctx = ToolContext::new(workspace, ToolPolicy::Auto, approvals)
+        .with_cancel(cancels.clone(), session_id.clone());
+    let sink: Channel<StreamEvent> = Channel::new(|_| Ok(()));
+    let engine = ChatEngine::new(
+        &provider, &instruction, &skill_summaries, &skill_instructions,
+        &tool_ctx, &cancels, &session_id, &http, token_budget, custom_price,
+        None, None, Some(1200),
+    )
+    .with_read_only();
+    let (answer, _reasoning, usage) = engine.run(&history, &sink).await?;
+    let summary = truncate_utf8_text(answer.trim(), 1200);
+    let summary = if summary.trim().is_empty() { "本子任务未返回可汇总内容。".into() } else { summary };
+    Ok((summary, usage))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_subagents(
+    channel: Channel<StreamEvent>,
+    tasks: Vec<SubTaskSpec>,
+    provider: Provider,
+    skill_summaries: Vec<(String, String)>,
+    skill_instructions: HashMap<String, String>,
+    workspace: PathBuf,
+    approvals: ApprovalBroker,
+    cancels: CancelRegistry,
+    session_id: String,
+    http: reqwest::Client,
+    token_budget: usize,
+    custom_price: f64,
+    user_message: String,
+) -> Vec<SubAgentOutcome> {
+    stream::iter(tasks.into_iter().enumerate())
+        .map(|(index, task)| {
+            let channel = channel.clone();
+            let provider = provider.clone();
+            let skill_summaries = skill_summaries.clone();
+            let skill_instructions = skill_instructions.clone();
+            let workspace = workspace.clone();
+            let approvals = approvals.clone();
+            let cancels = cancels.clone();
+            let session_id = session_id.clone();
+            let http = http.clone();
+            let user_message = user_message.clone();
+            let task_id = if task.id.trim().is_empty() { format!("subagent-{}", index + 1) } else { task.id.clone() };
+            let title = task.title.clone();
+            async move {
+                let _ = channel.send(StreamEvent::SubAgentStart { task_id: task_id.clone(), title: title.clone() });
+                match run_one_subagent(
+                    provider, skill_summaries, skill_instructions,
+                    workspace, approvals, cancels, session_id, http, token_budget,
+                    custom_price, user_message, task,
+                ).await {
+                    Ok((summary, usage)) => {
+                        let _ = channel.send(StreamEvent::SubAgentDone {
+                            task_id: task_id.clone(),
+                            summary: truncate_utf8_text(&summary, 300),
+                        });
+                        SubAgentOutcome { title, summary, usage, error: None }
+                    }
+                    Err(error) => {
+                        let _ = channel.send(StreamEvent::SubAgentError {
+                            task_id: task_id.clone(),
+                            message: truncate_utf8_text(&error.0, 300),
+                        });
+                        SubAgentOutcome {
+                            title,
+                            summary: String::new(),
+                            usage: UsageStats::default(),
+                            error: Some(error.0),
+                        }
+                    }
+                }
+            }
+        })
+        .buffer_unordered(SUBAGENT_CONCURRENCY)
+        .collect()
+        .await
+}
+
 // ---------- 对话 ----------
 
 #[tauri::command]
@@ -309,6 +501,16 @@ pub async fn chat(
         let mut instructions = std::collections::HashMap::new();
         for s in &skills {
             let text = format!("# 技能: {}\n\n描述: {}\n\n{}", s.meta.name, s.meta.description, s.instructions);
+            // 参考文件全文以内部键保存，供 read_skill_reference 按需读取，避免全部进提示词。
+            let references = crate::skill::parser::load_skill_reference_files(std::path::Path::new(&s.path));
+            let reference_count = references.len();
+            for (file_name, content) in references {
+                instructions.insert(format!("__ref__:{}:{}", s.meta.name, file_name), content);
+            }
+            crate::logger::info(&format!(
+                "[skill] 注入技能 name={} dir_name={} chars={} refs={}",
+                s.meta.name, s.dir_name, text.chars().count(), reference_count
+            ));
             instructions.insert(s.dir_name.clone(), text.clone());
             instructions.insert(s.meta.name.clone(), text);
         }
@@ -319,11 +521,53 @@ pub async fn chat(
         let config = state.config.lock().unwrap();
         ToolPolicy::from_str(&config.tool_policy)
     };
+    let mut main_system_prompt = system_prompt.clone();
+    let mut subagent_usage = UsageStats::default();
+    let user_message = history.iter().rev()
+        .find(|message| message.role == Role::User)
+        .map(|message| message.content.clone())
+        .unwrap_or_default();
+
+    if !user_message.trim().is_empty() {
+        if let Some(tasks) = plan_subtasks(&provider, &state.http, &user_message).await {
+            let outcomes = tokio::select! {
+                results = run_subagents(
+                    channel.clone(), tasks, provider.clone(), skill_summaries.clone(),
+                    skill_instructions.clone(), workspace.clone(), state.approvals.clone(),
+                    state.cancels.clone(), session_id.clone(), state.http.clone(),
+                    effective_token_budget, custom_price, user_message.clone(),
+                ) => results,
+                _ = state.cancels.wait_cancelled(&session_id) => {
+                    let _ = channel.send(StreamEvent::Cancelled);
+                    state.cancels.clear(&session_id);
+                    return Ok(String::new());
+                }
+            };
+            let mut context = String::new();
+            for outcome in outcomes.into_iter().filter(|item| item.error.is_none()) {
+                subagent_usage.prompt_tokens += outcome.usage.prompt_tokens;
+                subagent_usage.completion_tokens += outcome.usage.completion_tokens;
+                subagent_usage.total_tokens += outcome.usage.total_tokens;
+                subagent_usage.requests += outcome.usage.requests;
+                subagent_usage.estimated_cost += outcome.usage.estimated_cost;
+                if outcome.summary.trim().is_empty() {
+                    continue;
+                }
+                context.push_str(&format!("\n- 子任务「{}」：{}", outcome.title, outcome.summary));
+            }
+            if !context.is_empty() {
+                main_system_prompt.push_str("\n\n## 并行子智能体分析结果\n以下结果来自只读分析子智能体，请直接用于回答用户，不要重复执行已完成的只读分析：");
+                main_system_prompt.push_str(&context);
+            }
+        }
+    }
+
     let tool_ctx = ToolContext::new(workspace, policy, state.approvals.clone())
-        .with_channel(channel.clone());
+        .with_channel(channel.clone())
+        .with_cancel(state.cancels.clone(), session_id.clone());
 
     let engine = ChatEngine::new(
-        &provider, &system_prompt, &skill_summaries, &skill_instructions,
+        &provider, &main_system_prompt, &skill_summaries, &skill_instructions,
         &tool_ctx, &state.cancels, &session_id, &state.http, effective_token_budget, custom_price,
         effective_enable_thinking, temperature, effective_max_tokens,
     );
@@ -352,8 +596,11 @@ pub async fn chat(
         if !answer.is_empty() || !reasoning.trim().is_empty() {
             session.messages.push(Message::assistant_with(answer.clone(), Some(reasoning)));
         }
-        session.usage.add(usage.prompt_tokens, usage.completion_tokens, 0.0);
-        session.usage.estimated_cost = usage.estimated_cost;
+        session.usage.prompt_tokens += usage.prompt_tokens + subagent_usage.prompt_tokens;
+        session.usage.completion_tokens += usage.completion_tokens + subagent_usage.completion_tokens;
+        session.usage.total_tokens += usage.total_tokens + subagent_usage.total_tokens;
+        session.usage.requests += usage.requests + subagent_usage.requests;
+        session.usage.estimated_cost = usage.estimated_cost + subagent_usage.estimated_cost;
         session.updated_at = chrono::Utc::now().timestamp();
     }
     drop(sessions);

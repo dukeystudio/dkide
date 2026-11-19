@@ -6,7 +6,7 @@ import { api } from '../api';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import ThemeMenu from './ThemeMenu.vue';
 import { renderMarkdown, copyText } from '../markdown';
-import type { Message, ToolCallView, GeneratedFile, Skill, TextAttachment } from '../types';
+import type { Message, GeneratedFile, Skill, StreamBlock, TextAttachment } from '../types';
 
 const emit = defineEmits<{ openSettings: [opts?: { focusAdd?: boolean; focusProviderId?: string }]; openSkills: [] }>();
 const store = useChatStore();
@@ -25,13 +25,9 @@ const skillMenuOpen = ref(false);
 
 const session = computed(() => store.currentSession);
 const streaming = computed(() => session.value ? store.isStreaming(session.value.id) : false);
-const streamText = computed(() => session.value ? store.textFor(session.value.id) : '');
-const streamReasoning = computed(() => session.value ? store.reasoningFor(session.value.id) : '');
-const streamTools = computed(() => session.value ? store.toolsFor(session.value.id) : []);
+const streamBlocks = computed<StreamBlock[]>(() => session.value ? store.blocksFor(session.value.id) : []);
 const streamFiles = computed(() => session.value ? store.filesFor(session.value.id) : []);
 const streamUsage = computed(() => session.value ? store.usageFor(session.value.id) : null);
-// 思考过程：生成中默认展开，生成完折叠（可手动点开）
-const reasoningOpen = ref(true);
 const workspaceOpen = ref(false);
 const workspacePanelEl = ref<HTMLElement | null>(null);
 const workspaceWidth = ref<number | null>(null);
@@ -122,9 +118,6 @@ function formatDuration(ms: number) {
 }
 const generationStartedAt = computed(() => session.value ? store.startTimeFor(session.value.id) : 0);
 const generationElapsed = computed(() => generationStartedAt.value ? formatDuration(now.value - generationStartedAt.value) : '00:00');
-function toolDuration(tool: ToolCallView) {
-  return formatDuration((tool.finished_at ?? now.value) - tool.started_at);
-}
 
 onMounted(() => {
   clockTimer = window.setInterval(() => { now.value = Date.now(); }, 1000);
@@ -173,7 +166,7 @@ function extractSkillNames(content: string) {
   for (const skill of availableSkills.value) {
     const token = `@${skill.meta.name}`;
     if (!cleaned.includes(token)) continue;
-    skillNames.push(skill.dir_name);
+    skillNames.push(skill.meta.name);
     cleaned = cleaned.split(token).join('');
   }
   return { content: cleaned.replace(/[ \t]+/g, ' ').trim(), skillNames };
@@ -208,10 +201,10 @@ watch(
   () => store.currentId,
   () => scrollToBottom(true)
 );
-// 生成增量：贴底才跟随，不强制
+// 生成增量：交错内容块持续追加时自动跟随到底部
 watch(
-  () => [streamText.value, streamTools.value.length, session.value?.messages.length],
-  () => scrollToBottom(false)
+  () => [streamBlocks.value, session.value?.messages.length],
+  () => scrollToBottom(streaming.value)
 );
 // 挂载即滚到底
 onMounted(() => scrollToBottom(true));
@@ -221,17 +214,26 @@ function md(content: string) { return renderMarkdown(content); }
 async function send() {
   const parsed = extractSkillNames(input.value.trim());
   const text = parsed.content;
-  if ((!text && !attachments.value.length) || streaming.value) return;
+  if (!text && !attachments.value.length) return;
   const attachmentText = attachments.value.map((item) => {
     const truncatedTip = item.truncated ? '\n（内容过长已截断）' : '';
     return `【附件：${item.name}】${truncatedTip}\n${item.content}`;
   }).join('\n\n');
   const content = [text, attachmentText].filter(Boolean).join('\n\n');
+  const interrupted = streaming.value;
+  const lastUserMessage = interrupted
+    ? [...(store.currentSession?.messages ?? [])].reverse().find((message) => message.role === 'user')
+    : undefined;
+  const reuseLastUser = !!lastUserMessage
+    && lastUserMessage.content === content
+    && Date.now() - lastUserMessage.created_at * 1000 < 60_000;
+  if (interrupted && store.currentId) await store.cancel(store.currentId);
+  if (streaming.value) return;
   await store.send(content, () => {
     input.value = '';
     attachments.value = [];
     attachmentError.value = '';
-  }, parsed.skillNames);
+  }, parsed.skillNames, reuseLastUser);
   scrollToBottom();
 }
 
@@ -339,27 +341,37 @@ function onSkillButtonClick() {
   skillMenuOpen.value = !skillMenuOpen.value;
 }
 
-function toggleTool(idx: number) {
-  const key = `${store.currentId}-${idx}`;
+function toggleBlock(id: number) {
+  const key = `${store.currentId}-${id}`;
   const next = new Set(expandedTools.value);
   next.has(key) ? next.delete(key) : next.add(key);
   expandedTools.value = next;
 }
-function isToolExpanded(idx: number) { return expandedTools.value.has(`${store.currentId}-${idx}`); }
-function toolIcon(name: string) {
-  const map: Record<string, string> = {
-    read_file: '📖', write_file: '✍️', list_files: '📂', run_command: '⌨️', activate_skill: '🧩',
+function isBlockExpanded(id: number) { return expandedTools.value.has(`${store.currentId}-${id}`); }
+function toolLabel(name: string) {
+  const labels: Record<string, string> = {
+    run_command: '执行命令', write_file: '写入文件', read_file: '读取文件',
+    list_files: '列出文件', activate_skill: '加载技能',
   };
-  return map[name] ?? '🔧';
+  return labels[name] ?? name;
+}
+function blockDuration(block: StreamBlock) {
+  const end = block.finished_at ?? Date.now();
+  const seconds = Math.max(0, Math.floor((end - block.started_at) / 1000));
+  return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+}
+function messageContent(m: Message) {
+  if (m.content) return m.content;
+  return m.reasoning ? '（本轮未返回正文，可能已中止生成。）' : '（本轮未返回内容。）';
 }
 
 async function copyMessage(m: Message) {
-  await copyText(m.content);
+  await copyText(messageContent(m));
   copiedId.value = m.id;
   setTimeout(() => { copiedId.value = ''; }, 1500);
 }
 
-function startEdit(m: Message) { editingId.value = m.id; editContent.value = m.content; }
+function startEdit(m: Message) { editingId.value = m.id; editContent.value = messageContent(m); }
 async function saveEdit(m: Message, onlyUpdate = false) {
   const ok = await store.editMessage(m.id, editContent.value, onlyUpdate);
   if (!ok) showCopyTip('未保存：已切换到其他会话，请回到原会话再编辑');
@@ -450,7 +462,7 @@ function toggleWorkspace() {
   if (!previewFile.value && streamFiles.value.length) void openFilePreview(streamFiles.value[0]);
 }
 
-function locateFileFromTool(tool: ToolCallView) {
+function locateFileFromTool(tool: { args?: string; result?: string }) {
   const raw = `${tool.args} ${tool.result ?? ''}`;
   const matched = streamFiles.value.find((f) =>
     raw.includes(f.path) || raw.includes(f.abs_path) || raw.includes(fileName(f))
@@ -529,7 +541,7 @@ async function onBubbleClick(e: MouseEvent) {
                 </div>
                 <div v-if="historyReasoningOpen[m.id]" class="reasoning-body" v-html="md(m.reasoning)"></div>
               </div>
-              <div class="bubble" v-html="md(m.content)" @click="onBubbleClick"></div>
+              <div class="bubble" v-html="md(messageContent(m))" @click="onBubbleClick"></div>
             </template>
           </div>
         </div>
@@ -537,36 +549,46 @@ async function onBubbleClick(e: MouseEvent) {
         <div v-if="streaming" class="msg assistant">
           <div class="msg-avatar">AI</div>
           <div class="msg-body">
-            <div class="msg-name">助手 <span class="stream-elapsed">生成中… {{ generationElapsed }}</span></div>
-            <div v-if="store.config?.show_reasoning && (streamReasoning || streaming)" class="reasoning" :class="{ open: reasoningOpen }">
-              <div class="reasoning-head" @click="reasoningOpen = !reasoningOpen">
-                <span>💭 思考过程</span>
-                <span class="reasoning-time">{{ generationElapsed }}</span>
-                <span class="reasoning-toggle">{{ reasoningOpen ? '收起' : '展开' }}</span>
+            <div class="msg-name">助手 <span class="stream-elapsed">已处理 {{ generationElapsed }}</span></div>
+            <div v-if="!streamBlocks.length" class="stream-placeholder">正在思考…</div>
+            <template v-for="block in streamBlocks" :key="block.id">
+              <div v-if="block.kind === 'text'" class="stream-text" v-html="md(block.text || '')"></div>
+              <div v-else-if="block.kind === 'reasoning' && store.config?.show_reasoning" class="stream-status-item">
+                <div class="stream-status-line" @click="toggleBlock(block.id)">
+                  <span class="status-icon">&lt;/&gt;</span>
+                  <span>正在思考</span>
+                  <span class="status-detail">{{ blockDuration(block) }}</span>
+                  <span class="status-caret">{{ isBlockExpanded(block.id) ? '▾' : '▸' }}</span>
+                </div>
+                <div v-if="isBlockExpanded(block.id)" class="stream-block-detail" v-html="md(block.text || '')"></div>
               </div>
-              <div v-if="reasoningOpen" class="reasoning-body">
-                <div v-if="streamReasoning" v-html="md(streamReasoning)"></div>
-                <div v-else class="reasoning-placeholder">该模型未返回思考文本，本轮已用时 {{ generationElapsed }}</div>
+              <div v-else-if="block.kind === 'subagent'" class="stream-status-item">
+                <div class="stream-status-line" @click="toggleBlock(block.id)">
+                  <span class="status-icon">&lt;/&gt;</span>
+                  <span>子智能体 · {{ block.name }}</span>
+                  <span class="status-detail">{{ block.status === 'running' ? '正在分析' : block.status === 'error' ? '分析失败' : '已完成' }} · {{ blockDuration(block) }}</span>
+                  <span class="status-caret">{{ isBlockExpanded(block.id) ? '▾' : '▸' }}</span>
+                </div>
+                <div v-if="isBlockExpanded(block.id)" class="stream-block-detail">{{ block.result || '正在等待结果…' }}</div>
               </div>
-            </div>
-            <div v-for="(t, ti) in streamTools" :key="ti" class="tool-call">
-              <div class="tool-call-head" @click="toggleTool(ti)">
-                <span>{{ toolIcon(t.name) }}</span>
-                <span>{{ t.name === 'activate_skill' ? '加载技能' : t.name === 'run_command' ? '执行命令' : t.name === 'write_file' ? '写入文件' : t.name }}</span>
-                <span class="tool-status">{{ t.status === 'running' ? '执行中' : '完成' }} {{ toolDuration(t) }}</span>
-                <span style="margin-left:auto;">{{ isToolExpanded(ti) ? '▾' : '▸' }}</span>
+              <div v-else-if="block.kind === 'tool'" class="stream-status-item">
+                <div class="stream-status-line" @click="toggleBlock(block.id)">
+                  <span class="status-icon">&lt;/&gt;</span>
+                  <span>{{ block.status === 'running' ? '正在执行代码' : '已执行代码' }}</span>
+                  <span class="status-detail">{{ toolLabel(block.name || '') }} · {{ blockDuration(block) }}</span>
+                  <span class="status-caret">{{ isBlockExpanded(block.id) ? '▾' : '▸' }}</span>
+                </div>
+                <div v-if="isBlockExpanded(block.id)" class="stream-block-detail">
+                  <div><span class="tool-label">参数 </span>{{ block.args }}</div>
+                  <div v-if="block.result" style="margin-top:6px;"><span class="tool-label">结果 </span>{{ block.result }}</div>
+                  <button
+                    v-if="block.name === 'write_file' && streamFiles.length"
+                    class="tool-file-link"
+                    @click.stop="locateFileFromTool(block)"
+                  >📁 在文件面板中查看</button>
+                </div>
               </div>
-              <div v-if="isToolExpanded(ti)" class="tool-call-body">
-                <div><span class="tool-label">参数 </span>{{ t.args }}</div>
-                <div v-if="t.result" style="margin-top:6px;"><span class="tool-label">结果 </span>{{ t.result }}</div>
-                <button
-                  v-if="t.name === 'write_file' && streamFiles.length"
-                  class="tool-file-link"
-                  @click.stop="locateFileFromTool(t)"
-                >📁 在文件面板中查看</button>
-              </div>
-            </div>
-            <div class="bubble typing" v-html="md(streamText)"></div>
+            </template>
             <div v-if="streamUsage && streamUsage.total_tokens" class="usage-bar">
               {{ streamUsage.total_tokens }} tokens · ${{ streamUsage.estimated_cost.toFixed(4) }} · 用时 {{ generationElapsed }}
             </div>
@@ -577,9 +599,10 @@ async function onBubbleClick(e: MouseEvent) {
 
     <div class="composer">
       <div class="composer-inner">
-        <div v-if="store.error" class="error-box">{{ store.error }}</div>
-        <div v-if="copyTip" class="copy-tip">{{ copyTip }}</div>
-        <div ref="composerBoxEl" class="composer-box">
+        <div class="composer-content">
+          <div v-if="store.error" class="error-box">{{ store.error }}</div>
+          <div v-if="copyTip" class="copy-tip">{{ copyTip }}</div>
+          <div ref="composerBoxEl" class="composer-box">
           <div v-if="dragOverComposer" class="drop-overlay">松开即可添加为文本附件</div>
           <div v-if="attachments.length" class="attachment-list">
             <span v-for="(item, index) in attachments" :key="`${item.name}-${index}`" class="attachment-chip">
@@ -648,10 +671,11 @@ async function onBubbleClick(e: MouseEvent) {
               </div>
             </div>
             <div class="composer-actions">
-              <button v-if="streaming" class="stop-btn" @click="store.cancel(store.currentId!)">停止生成</button>
+              <button v-if="streaming" class="stop-btn" title="输入新指令后按回车，可直接中止并发送新指令" @click="store.cancel(store.currentId!)">停止生成</button>
               <button v-else class="send-btn" :disabled="!canSend" @click="send">发送</button>
             </div>
           </div>
+        </div>
         </div>
       </div>
     </div>

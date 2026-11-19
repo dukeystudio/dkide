@@ -12,6 +12,12 @@ pub enum StreamEvent {
     Tool { name: String, args: String },
     /// 工具执行结果
     ToolResult { name: String, result: String },
+    /// 子智能体开始执行
+    SubAgentStart { task_id: String, title: String },
+    /// 子智能体完成并返回摘要
+    SubAgentDone { task_id: String, summary: String },
+    /// 子智能体执行失败
+    SubAgentError { task_id: String, message: String },
     /// 生成了一个文件（写/改），前端展示到"生成文件"面板。path 为工作目录相对路径，绝对路径也一并给出
     File { path: String, abs_path: String, kind: String },
     /// 需要用户审批的命令

@@ -19,6 +19,7 @@ futures = "0.3"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 zip = "2"
+encoding_rs = "0.8"
 dirs = "5"
 keyring = { version = "3", features = ["windows-native"] }
 base64 = "0.22"

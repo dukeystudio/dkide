@@ -42,9 +42,16 @@ impl SkillManager {
                         .and_then(|n| n.to_str())
                         .unwrap_or("")
                         .to_string();
-                    match load_skill_from_dir(&path, is_enabled(&dir_name, enabled_skills)) {
-                        Ok(skill) => skills.push(skill),
-                        Err(e) => eprintln!("跳过技能 {}: {}", dir_name, e),
+                    match load_skill_from_dir(&path, true) {
+                        Ok(mut skill) => {
+                            skill.enabled = is_enabled(&skill, enabled_skills);
+                            crate::logger::info(&format!(
+                                "[skill] 扫描技能 name={} dir_name={} enabled={} instructions={}bytes",
+                                skill.meta.name, skill.dir_name, skill.enabled, skill.instructions.len()
+                            ));
+                            skills.push(skill);
+                        }
+                        Err(e) => crate::logger::warn(&format!("[skill] 跳过技能 {}: {}", dir_name, e)),
                     }
                 }
             }
@@ -76,11 +83,11 @@ impl SkillManager {
         let mut archive = zip::ZipArchive::new(file)
             .map_err(|e| AppError(format!("无法打开 zip: {}", e)))?;
 
-        // 找出 zip 内包含 SKILL.md 的顶层目录
+        // 找出 zip 内包含 SKILL.md 的顶层目录（条目名按 UTF-8/GBK 修复后再用）
         let mut root: Option<String> = None;
         for i in 0..archive.len() {
             let entry = archive.by_index(i).map_err(|e| AppError(e.to_string()))?;
-            let name = entry.name().to_string();
+            let name = decode_zip_entry_name(entry.name_raw());
             if name.ends_with("SKILL.md") {
                 let parts: Vec<&str> = name.split('/').collect();
                 if parts.len() >= 2 {
@@ -89,6 +96,7 @@ impl SkillManager {
             }
         }
         let root = root.ok_or_else(|| AppError("zip 中未找到 SKILL.md".into()))?;
+        crate::logger::info(&format!("[skill] 安装 zip 顶层目录 name={}", root));
         let dest = self.global_dir.join(&root);
         if dest.exists() {
             return Err(AppError(format!("技能 {} 已存在", root)));
@@ -97,7 +105,7 @@ impl SkillManager {
 
         for i in 0..archive.len() {
             let mut entry = archive.by_index(i).map_err(|e| AppError(e.to_string()))?;
-            let name = entry.name().to_string();
+            let name = decode_zip_entry_name(entry.name_raw());
             if !name.starts_with(&format!("{}/", root)) {
                 continue;
             }
@@ -159,11 +167,20 @@ impl SkillManager {
     }
 }
 
-fn is_enabled(dir_name: &str, enabled_skills: &[String]) -> bool {
+/// zip 条目名解码：先按 UTF-8，失败回退 GBK（Windows 中文 zip 常见）。
+fn decode_zip_entry_name(raw: &[u8]) -> String {
+    crate::skill::parser::decode_utf8_or_gbk(raw)
+}
+
+/// 启用判断：同时兼容技能名（meta.name）与目录名（dir_name），
+/// 避免历史配置里保存的是其中任意一种时技能被误判为未启用。
+fn is_enabled(skill: &Skill, enabled_skills: &[String]) -> bool {
     if enabled_skills.is_empty() {
         true
     } else {
-        enabled_skills.iter().any(|s| s == dir_name)
+        enabled_skills
+            .iter()
+            .any(|s| s == &skill.meta.name || s == &skill.dir_name)
     }
 }
 

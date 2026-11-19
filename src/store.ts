@@ -3,7 +3,7 @@ import { ref, computed } from 'vue';
 import { api } from './api';
 import { useSkillsStore } from './skillsStore';
 import { useAuthStore } from './authStore';
-import type { AppConfig, Approval, GeneratedFile, Message, Session, StreamEvent, ToolCallView, UsageStats } from './types';
+import type { AppConfig, Approval, GeneratedFile, Message, Session, StreamBlock, StreamEvent, ToolCallView, UsageStats } from './types';
 
 export const useChatStore = defineStore('chat', () => {
   const sessions = ref<Session[]>([]);
@@ -24,12 +24,14 @@ export const useChatStore = defineStore('chat', () => {
   const streamText = ref<Record<string, string>>({});
   const streamReasoning = ref<Record<string, string>>({});
   const streamTools = ref<Record<string, ToolCallView[]>>({});
+  const streamBlocks = ref<Record<string, StreamBlock[]>>({});
   const streamFiles = ref<Record<string, GeneratedFile[]>>({});
   const streamUsage = ref<Record<string, UsageStats>>({});
   const streamStartedAt = ref<Record<string, number>>({});
 
   const pendingApprovals = ref<Approval[]>([]);
   let approvalTimer: number | null = null;
+  let streamBlockSequence = 0;
 
   const currentSession = computed(() =>
     sessions.value.find((s) => s.id === currentId.value) ?? null
@@ -49,9 +51,103 @@ export const useChatStore = defineStore('chat', () => {
   function textFor(id: string) { return streamText.value[id] ?? ''; }
   function reasoningFor(id: string) { return streamReasoning.value[id] ?? ''; }
   function toolsFor(id: string) { return streamTools.value[id] ?? []; }
+  function blocksFor(id: string) { return streamBlocks.value[id] ?? []; }
   function filesFor(id: string) { return streamFiles.value[id] ?? []; }
   function usageFor(id: string) { return streamUsage.value[id] ?? null; }
   function startTimeFor(id: string) { return streamStartedAt.value[id] ?? 0; }
+
+  function appendStreamBlock(sessionId: string, block: StreamBlock) {
+    streamBlocks.value[sessionId] = [...(streamBlocks.value[sessionId] ?? []), block];
+  }
+
+  function appendStreamText(sessionId: string, text: string) {
+    const blocks = [...(streamBlocks.value[sessionId] ?? [])];
+    const last = blocks[blocks.length - 1];
+    if (last?.kind === 'text') {
+      blocks[blocks.length - 1] = { ...last, text: (last.text ?? '') + text };
+    } else {
+      blocks.push({ id: ++streamBlockSequence, kind: 'text', text, started_at: Date.now() });
+    }
+    streamBlocks.value[sessionId] = blocks;
+  }
+
+  function appendStreamReasoning(sessionId: string, text: string) {
+    const blocks = [...(streamBlocks.value[sessionId] ?? [])];
+    const last = blocks[blocks.length - 1];
+    if (last?.kind === 'reasoning') {
+      blocks[blocks.length - 1] = { ...last, text: (last.text ?? '') + text };
+    } else {
+      blocks.push({ id: ++streamBlockSequence, kind: 'reasoning', text, started_at: Date.now() });
+    }
+    streamBlocks.value[sessionId] = blocks;
+  }
+
+  function appendStreamTool(sessionId: string, name: string, args: string) {
+    appendStreamBlock(sessionId, {
+      id: ++streamBlockSequence,
+      kind: 'tool',
+      name,
+      args,
+      status: 'running',
+      started_at: Date.now(),
+    });
+  }
+
+  function completeStreamTool(sessionId: string, name: string, result: string, status: 'done' | 'error') {
+    const blocks = [...(streamBlocks.value[sessionId] ?? [])];
+    for (let index = blocks.length - 1; index >= 0; index--) {
+      const block = blocks[index];
+      if (block.kind !== 'tool' || block.name !== name || block.status !== 'running') continue;
+      blocks[index] = { ...block, result, status, finished_at: Date.now() };
+      streamBlocks.value[sessionId] = blocks;
+      return;
+    }
+  }
+
+  function appendSubAgentBlock(sessionId: string, taskId: string, title: string) {
+    appendStreamBlock(sessionId, {
+      id: ++streamBlockSequence,
+      task_id: taskId,
+      kind: 'subagent',
+      name: title,
+      status: 'running',
+      started_at: Date.now(),
+    });
+  }
+
+  function completeSubAgentBlock(sessionId: string, taskId: string, result: string, status: 'done' | 'error') {
+    const blocks = [...(streamBlocks.value[sessionId] ?? [])];
+    for (let index = blocks.length - 1; index >= 0; index--) {
+      const block = blocks[index];
+      if (block.kind !== 'subagent' || block.task_id !== taskId || block.status !== 'running') continue;
+      blocks[index] = { ...block, result, status, finished_at: Date.now() };
+      streamBlocks.value[sessionId] = blocks;
+      return;
+    }
+  }
+
+  function finalizeRunningTools(sessionId: string, result: string) {
+    const tools = streamTools.value[sessionId] || [];
+    let changed = false;
+    for (const tool of tools) {
+      if (tool.status !== 'running') continue;
+      tool.status = 'done';
+      tool.result = result;
+      tool.finished_at = Date.now();
+      changed = true;
+    }
+    if (changed) streamTools.value[sessionId] = [...tools];
+    const blocks = [...(streamBlocks.value[sessionId] ?? [])];
+    let blocksChanged = false;
+    for (const block of blocks) {
+      if ((block.kind !== 'tool' && block.kind !== 'subagent') || block.status !== 'running') continue;
+      block.status = 'done';
+      block.result = result;
+      block.finished_at = Date.now();
+      blocksChanged = true;
+    }
+    if (blocksChanged) streamBlocks.value[sessionId] = blocks;
+  }
 
   async function init() {
     config.value = await api.getConfig();
@@ -135,7 +231,12 @@ export const useChatStore = defineStore('chat', () => {
     return false;
   }
 
-  async function send(content: string, onAccepted?: () => void, skillNames: string[] | null = null): Promise<boolean> {
+  async function send(
+    content: string,
+    onAccepted?: () => void,
+    skillNames: string[] | null = null,
+    reuseLastUser = false,
+  ): Promise<boolean> {
     const session = currentSession.value;
     if (!session || isStreaming(session.id) || !content.trim()) return false;
 
@@ -149,18 +250,25 @@ export const useChatStore = defineStore('chat', () => {
       content: content.trim(),
       created_at: Math.floor(Date.now() / 1000),
     };
-    session.messages.push(userMsg);
-    await api.appendMessage(session.id, userMsg);
-    onAccepted?.();
-    if (session.title === '新会话') {
-      await renameSession(session.id, content.trim().slice(0, 20));
+    const lastUserMessage = [...session.messages].reverse().find((message) => message.role === 'user');
+    const reuseExisting = reuseLastUser
+      && lastUserMessage?.content === content.trim()
+      && Date.now() - lastUserMessage.created_at * 1000 < 60_000;
+    if (!reuseExisting) {
+      session.messages.push(userMsg);
+      await api.appendMessage(session.id, userMsg);
+      if (session.title === '新会话') {
+        await renameSession(session.id, content.trim().slice(0, 20));
+      }
     }
+    onAccepted?.();
 
     const sid = session.id;
     streamingIds.value = new Set([...streamingIds.value, sid]);
     streamText.value[sid] = '';
     streamReasoning.value[sid] = '';
     streamTools.value[sid] = [];
+    streamBlocks.value[sid] = [];
     streamFiles.value[sid] = [];
     streamStartedAt.value[sid] = Date.now();
     streamUsage.value[sid] = {
@@ -173,26 +281,40 @@ export const useChatStore = defineStore('chat', () => {
         switch (event.type) {
           case 'delta':
             streamText.value[sid] = (streamText.value[sid] || '') + event.text;
+            appendStreamText(sid, event.text);
             break;
           case 'reasoning':
             streamReasoning.value[sid] = (streamReasoning.value[sid] || '') + event.text;
+            appendStreamReasoning(sid, event.text);
             break;
           case 'tool':
             streamTools.value[sid] = [
               ...(streamTools.value[sid] || []),
               { name: event.name, args: event.args, status: 'running', started_at: Date.now() },
             ];
+            appendStreamTool(sid, event.name, event.args);
             break;
           case 'tool_result': {
             const tools = streamTools.value[sid] || [];
+            const status = event.result.startsWith('执行失败') ? 'error' : 'done';
             const idx = [...tools].reverse().findIndex((t) => t.name === event.name && t.status === 'running');
             if (idx >= 0) {
               const real = tools.length - 1 - idx;
-              tools[real] = { ...tools[real], result: event.result, status: 'done', finished_at: Date.now() };
+              tools[real] = { ...tools[real], result: event.result, status, finished_at: Date.now() };
               streamTools.value[sid] = [...tools];
             }
+            completeStreamTool(sid, event.name, event.result, status === 'error' ? 'error' : 'done');
             break;
           }
+          case 'sub_agent_start':
+            appendSubAgentBlock(sid, event.task_id, event.title);
+            break;
+          case 'sub_agent_done':
+            completeSubAgentBlock(sid, event.task_id, event.summary, 'done');
+            break;
+          case 'sub_agent_error':
+            completeSubAgentBlock(sid, event.task_id, event.message, 'error');
+            break;
           case 'file':
             // 去重：同一文件多次写入只保留最新一次
             streamFiles.value[sid] = [
@@ -217,15 +339,19 @@ export const useChatStore = defineStore('chat', () => {
             break;
           case 'error':
             error.value = event.message;
+            finalizeRunningTools(sid, '生成失败');
             break;
           case 'cancelled':
             streamText.value[sid] = (streamText.value[sid] || '') + '\n\n*[已停止生成]*';
+            appendStreamText(sid, '\n\n*[已停止生成]*');
+            finalizeRunningTools(sid, '已停止生成');
             break;
           case 'done':
+            finalizeRunningTools(sid, '已完成');
             session.messages.push({
               id: `local-a-${Date.now()}`,
               role: 'assistant',
-              content: event.content,
+              content: event.content || '（模型本轮未返回内容。）',
               reasoning: event.reasoning || streamReasoning.value[sid] || undefined,
               created_at: Math.floor(Date.now() / 1000),
             });
@@ -238,6 +364,7 @@ export const useChatStore = defineStore('chat', () => {
       const msg = typeof e === 'string' ? e : e?.message ?? String(e);
       // 后端返回的错误字符串可能带 "command failed" 前缀，提取核心
       error.value = msg.replace(/^.*?(failed|error):\s*/i, '') || msg;
+      finalizeRunningTools(sid, '生成失败');
     } finally {
       const next = new Set(streamingIds.value);
       next.delete(sid);
@@ -245,6 +372,7 @@ export const useChatStore = defineStore('chat', () => {
       delete streamText.value[sid];
       delete streamReasoning.value[sid];
       delete streamTools.value[sid];
+      delete streamBlocks.value[sid];
       delete streamUsage.value[sid];
       // streamFiles 保留，供"生成文件"面板在生成结束后继续展示；下次 send 开头会清空
     }
@@ -252,7 +380,17 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function cancel(sid: string) {
-    await api.cancelChat(sid);
+    try {
+      await api.cancelChat(sid);
+    } catch { /* 后端可能已结束，继续本地收尾 */ }
+    for (let attempt = 0; attempt < 80 && isStreaming(sid); attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (isStreaming(sid)) {
+      const next = new Set(streamingIds.value);
+      next.delete(sid);
+      streamingIds.value = next;
+    }
   }
 
   let undoing = false;
@@ -342,7 +480,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     sessions, currentId, currentSession, filteredSessions, config, error, searchQuery, providerRequired, providerDialogOpen, focusAddProvider, providerDialogFocusId,
     streamingIds, totalUsage, pendingApprovals,
-    isStreaming, textFor, reasoningFor, toolsFor, filesFor, usageFor, startTimeFor,
+    isStreaming, textFor, reasoningFor, toolsFor, blocksFor, filesFor, usageFor, startTimeFor,
     init, newSession, selectSession, deleteSession, renameSession, togglePin,
     deleteMessage, refreshUsage, send, cancel, regenerate, undo, editMessage, saveConfig,
     respondApproval,

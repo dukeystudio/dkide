@@ -1,9 +1,13 @@
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Duration;
 
 use tauri::ipc::Channel;
 
 use crate::approval::ApprovalBroker;
+use crate::cancel::CancelRegistry;
 use crate::error::{AppError, Result};
 use crate::llm::types::StreamEvent;
 use crate::logger;
@@ -32,16 +36,30 @@ pub struct ToolContext {
     pub policy: ToolPolicy,
     pub approvals: ApprovalBroker,
     pub channel: Option<Channel<StreamEvent>>,
+    cancels: Option<CancelRegistry>,
+    session_id: Option<String>,
 }
 
 impl ToolContext {
     pub fn new(workspace: PathBuf, policy: ToolPolicy, approvals: ApprovalBroker) -> Self {
-        Self { workspace, policy, approvals, channel: None }
+        Self { workspace, policy, approvals, channel: None, cancels: None, session_id: None }
     }
 
     pub fn with_channel(mut self, channel: Channel<StreamEvent>) -> Self {
         self.channel = Some(channel);
         self
+    }
+
+    pub fn with_cancel(mut self, cancels: CancelRegistry, session_id: String) -> Self {
+        self.cancels = Some(cancels);
+        self.session_id = Some(session_id);
+        self
+    }
+
+    fn is_cancelled(&self) -> bool {
+        let Some(cancels) = &self.cancels else { return false };
+        let Some(session_id) = &self.session_id else { return false };
+        cancels.is_cancelled(session_id)
     }
 
     fn resolve(&self, path: &str) -> Result<PathBuf> {
@@ -234,64 +252,172 @@ pub fn exec_tool(ctx: &ToolContext, name: &str, args: &str) -> Result<String> {
             }
             ctx.require_approval("run_command", format!("执行命令: {}", command))?;
             logger::tool("run_command", command);
-            run_command_shell(command, &ctx.workspace)
+            let repaired_command = repair_mojibake(command);
+            run_command_shell(&repaired_command, &ctx.workspace, ctx)
         }
         _ => Err(AppError(format!("未知内置工具: {}", name))),
     };
 
-    if let Ok(ref text) = result {
-        if let Some(ref channel) = ctx.channel {
-            let _ = channel.send(StreamEvent::ToolResult {
-                name: name.to_string(),
-                result: truncate_chars(text, 500),
-            });
-        }
+    if let Some(ref channel) = ctx.channel {
+        let display = match &result {
+            Ok(text) => text.clone(),
+            Err(error) => format!("执行失败：{}", error.0),
+        };
+        let _ = channel.send(StreamEvent::ToolResult {
+            name: name.to_string(),
+            result: truncate_chars(&display, 500),
+        });
     }
     result
 }
 
-fn run_command_shell(command: &str, cwd: &Path) -> Result<String> {
+fn strip_powershell_prefix(command: &str) -> &str {
+    let mut rest = command.trim();
+    let first_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+    let first = &rest[..first_end];
+    if !first.eq_ignore_ascii_case("powershell")
+        && !first.eq_ignore_ascii_case("powershell.exe")
+        && !first.eq_ignore_ascii_case("pwsh")
+        && !first.eq_ignore_ascii_case("pwsh.exe")
+    {
+        return rest;
+    }
+    rest = rest[first_end..].trim_start();
+    loop {
+        let token_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        let token = &rest[..token_end];
+        let lower = token.to_ascii_lowercase();
+        if matches!(lower.as_str(), "-nop" | "-noprofile" | "-noninteractive" | "-c" | "-command") {
+            rest = rest[token_end..].trim_start();
+        } else {
+            break;
+        }
+    }
+    if rest.len() >= 2 && rest.starts_with('"') && rest.ends_with('"') {
+        rest = &rest[1..rest.len() - 1];
+    }
+    rest
+}
+
+fn normalize_shell_command(command: &str) -> (bool, &str) {
+    let trimmed = command.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    let starts_powershell = lower.starts_with("powershell.exe")
+        || lower.starts_with("powershell ")
+        || lower.starts_with("pwsh.exe")
+        || lower.starts_with("pwsh ");
+    let looks_powershell = starts_powershell
+        || trimmed.contains("& '")
+        || lower.contains("get-childitem")
+        || lower.contains("write-output")
+        || lower.contains("2>null")
+        || trimmed.contains('$');
+    let cleaned = if starts_powershell { strip_powershell_prefix(trimmed) } else { trimmed };
+    (looks_powershell, cleaned)
+}
+
+#[cfg(target_os = "windows")]
+fn kill_child_tree(child: &mut std::process::Child) {
+    let pid = child.id().to_string();
+    let _ = child.kill();
+    let _ = std::process::Command::new("taskkill")
+        .args(["/PID", pid.as_str(), "/T", "/F"])
+        .output();
+    let _ = child.wait();
+}
+
+#[cfg(not(target_os = "windows"))]
+fn kill_child_tree(child: &mut std::process::Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn run_command_shell(command: &str, cwd: &Path, ctx: &ToolContext) -> Result<String> {
+    let (use_powershell, cleaned) = normalize_shell_command(command);
+
     #[cfg(target_os = "windows")]
-    let mut child = std::process::Command::new("cmd")
-        .args(["/C", command])
-        .current_dir(cwd)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| AppError(format!("启动命令失败: {}", e)))?;
+    let shell_command = if use_powershell {
+        format!("[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$OutputEncoding=[System.Text.Encoding]::UTF8;{}", cleaned)
+    } else {
+        format!("chcp.com 65001 >nul && {}", cleaned)
+    };
+
+    #[cfg(target_os = "windows")]
+    let mut child = if use_powershell {
+        std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", shell_command.as_str()])
+            .current_dir(cwd)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+    } else {
+        std::process::Command::new("cmd")
+            .args(["/C", shell_command.as_str()])
+            .current_dir(cwd)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+    }
+    .map_err(|e| AppError(format!("启动命令失败: {}", e)))?;
 
     #[cfg(not(target_os = "windows"))]
     let mut child = std::process::Command::new("sh")
-        .args(["-c", command])
+        .args(["-c", cleaned])
         .current_dir(cwd)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| AppError(format!("启动命令失败: {}", e)))?;
 
-    // 带超时的等待：轮询 try_wait，30 秒后 kill
+    let stdout_arc = Arc::new(Mutex::new(String::new()));
+    let stderr_arc = Arc::new(Mutex::new(String::new()));
+    let mut stdout_reader = child.stdout.take().ok_or_else(|| AppError("无法读取命令标准输出".into()))?;
+    let mut stderr_reader = child.stderr.take().ok_or_else(|| AppError("无法读取命令错误输出".into()))?;
+    let stdout_handle = {
+        let buffer = Arc::clone(&stdout_arc);
+        thread::spawn(move || {
+            let mut text = String::new();
+            let _ = stdout_reader.read_to_string(&mut text);
+            *buffer.lock().unwrap() = text;
+        })
+    };
+    let stderr_handle = {
+        let buffer = Arc::clone(&stderr_arc);
+        thread::spawn(move || {
+            let mut text = String::new();
+            let _ = stderr_reader.read_to_string(&mut text);
+            *buffer.lock().unwrap() = text;
+        })
+    };
+
     let timeout = Duration::from_secs(30);
     let start = std::time::Instant::now();
     let status = loop {
         match child.try_wait() {
-            Ok(Some(s)) => break s,
+            Ok(Some(status)) => break status,
             Ok(None) => {
-                if start.elapsed() > timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(AppError("命令执行超时（30 秒）".into()));
+                if ctx.is_cancelled() {
+                    kill_child_tree(&mut child);
+                    let _ = stdout_handle.join();
+                    let _ = stderr_handle.join();
+                    return Err(AppError("命令已被用户中止".into()));
                 }
-                std::thread::sleep(Duration::from_millis(50));
+                if start.elapsed() > timeout {
+                    kill_child_tree(&mut child);
+                    let _ = stdout_handle.join();
+                    let _ = stderr_handle.join();
+                    return Err(AppError("命令执行超时（30 秒），已终止进程树".into()));
+                }
+                thread::sleep(Duration::from_millis(50));
             }
-            Err(e) => return Err(AppError(format!("等待命令失败: {}", e))),
+            Err(error) => return Err(AppError(format!("等待命令失败: {}", error))),
         }
     };
 
-    let output = child
-        .wait_with_output()
-        .map_err(|e| AppError(format!("读取命令输出失败: {}", e)))?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let _ = stdout_handle.join();
+    let _ = stderr_handle.join();
+    let stdout = repair_mojibake(&stdout_arc.lock().unwrap().clone());
+    let stderr = repair_mojibake(&stderr_arc.lock().unwrap().clone());
     let mut result = String::new();
     result.push_str(&format!("退出码: {}\n", status.code().unwrap_or(-1)));
     if !stdout.is_empty() {
@@ -303,6 +429,32 @@ fn run_command_shell(command: &str, cwd: &Path) -> Result<String> {
         result.push_str(&stderr);
     }
     Ok(truncate_chars(&result, 20000))
+}
+
+fn is_cjk(ch: char) -> bool {
+    matches!(ch as u32, 0x3400..=0x9FFF | 0xF900..=0xFAFF)
+}
+
+fn repair_mojibake(text: &str) -> String {
+    let has_latin1 = text.chars().any(|ch| ('\u{0080}'..='\u{00FF}').contains(&ch));
+    let has_cjk = text.chars().any(is_cjk);
+    if !has_latin1 || !has_cjk {
+        return text.to_string();
+    }
+    let mut bytes = Vec::with_capacity(text.len());
+    for ch in text.chars() {
+        let code = ch as u32;
+        if (0x80..=0xFF).contains(&code) {
+            bytes.push(code as u8);
+        } else {
+            let mut buffer = [0u8; 4];
+            bytes.extend_from_slice(ch.encode_utf8(&mut buffer).as_bytes());
+        }
+    }
+    match String::from_utf8(bytes) {
+        Ok(repaired) if !repaired.contains('\u{FFFD}') => repaired,
+        _ => text.to_string(),
+    }
 }
 
 fn truncate_chars(s: &str, max: usize) -> String {

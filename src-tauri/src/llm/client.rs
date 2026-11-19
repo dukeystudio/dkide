@@ -16,6 +16,34 @@ use crate::usage::{model_price, trim_history, UsageStats};
 
 const MAX_TOOL_ROUNDS: usize = 12;
 
+fn resolve_answer_content(content: String, reasoning: &str) -> String {
+    if !content.trim().is_empty() {
+        return content;
+    }
+    if reasoning.trim().is_empty() {
+        "（模型本轮未返回内容。）".into()
+    } else {
+        "（模型本轮未返回正文，仅返回了思考过程。）".into()
+    }
+}
+
+fn tool_call_signature(name: &str, arguments: &str) -> String {
+    format!("{}:{}", name, arguments)
+}
+
+fn has_repeated_tool_call(messages: &[WireMessage], signatures: &[String]) -> bool {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for message in messages {
+        if let Some(calls) = &message.tool_calls {
+            for call in calls {
+                let signature = tool_call_signature(&call.function.name, &call.function.arguments);
+                *counts.entry(signature).or_insert(0) += 1;
+            }
+        }
+    }
+    signatures.iter().any(|signature| counts.get(signature).copied().unwrap_or(0) >= 2)
+}
+
 pub struct ChatEngine<'a> {
     provider: &'a Provider,
     system_prompt: &'a str,
@@ -30,6 +58,7 @@ pub struct ChatEngine<'a> {
     enable_thinking: Option<bool>,
     temperature: Option<f64>,
     max_tokens: Option<u32>,
+    read_only: bool,
 }
 
 impl<'a> ChatEngine<'a> {
@@ -52,8 +81,13 @@ impl<'a> ChatEngine<'a> {
         Self {
             provider, system_prompt, skills, skill_instructions, tool_ctx,
             cancels, session_id, http, token_budget, custom_price,
-            enable_thinking, temperature, max_tokens,
+            enable_thinking, temperature, max_tokens, read_only: false,
         }
+    }
+
+    pub fn with_read_only(mut self) -> Self {
+        self.read_only = true;
+        self
     }
 
     pub async fn run(
@@ -70,7 +104,7 @@ impl<'a> ChatEngine<'a> {
         for _ in 0..MAX_TOOL_ROUNDS {
             if self.cancels.is_cancelled(self.session_id) {
                 let _ = channel.send(StreamEvent::Cancelled);
-                return Ok((String::new(), all_reasoning, total_usage));
+                return Ok((String::new(), String::new(), total_usage));
             }
 
             let result = self.stream_once(&messages, &tools, channel).await?;
@@ -90,8 +124,26 @@ impl<'a> ChatEngine<'a> {
             logger::llm(format!("model={} prompt={} completion={}", self.provider.model, prompt, completion));
 
             if result.tool_calls.is_empty() {
-                let _ = channel.send(StreamEvent::Done { content: result.content.clone(), reasoning: all_reasoning.clone() });
-                return Ok((result.content, all_reasoning, total_usage));
+                let mut content = result.content;
+                if content.trim().is_empty() && !all_reasoning.trim().is_empty() {
+                    logger::llm("empty answer after reasoning, retrying without thinking");
+                    if let Ok(retry) = self.stream_once_with_thinking(&messages, &tools, channel, Some(false), None).await {
+                        if !retry.content.trim().is_empty() {
+                            content = retry.content;
+                            let prompt = if retry.prompt_tokens > 0 { retry.prompt_tokens } else { UsageStats::estimate(&serde_json::to_string(&messages).unwrap_or_default()) };
+                            let completion = if retry.completion_tokens > 0 { retry.completion_tokens } else { UsageStats::estimate(&content) };
+                            total_usage.add(prompt, completion, price);
+                            let _ = channel.send(StreamEvent::Usage {
+                                prompt_tokens: total_usage.prompt_tokens,
+                                completion_tokens: total_usage.completion_tokens,
+                                estimated_cost: total_usage.estimated_cost,
+                            });
+                        }
+                    }
+                }
+                let answer = resolve_answer_content(content, &all_reasoning);
+                let _ = channel.send(StreamEvent::Done { content: answer.clone(), reasoning: all_reasoning.clone() });
+                return Ok((answer, all_reasoning, total_usage));
             }
 
             let wire_calls: Vec<WireToolCall> = result.tool_calls.iter().map(|c| WireToolCall {
@@ -99,6 +151,13 @@ impl<'a> ChatEngine<'a> {
                 kind: "function".into(),
                 function: WireFunctionCall { name: c.name.clone(), arguments: sanitize_arguments(&c.arguments) },
             }).collect();
+            let signatures: Vec<String> = wire_calls.iter()
+                .map(|call| tool_call_signature(&call.function.name, &call.function.arguments))
+                .collect();
+            if has_repeated_tool_call(&messages, &signatures) {
+                logger::llm("repeated tool calls detected, forcing final answer");
+                return self.force_final_answer(&messages, channel, &all_reasoning, total_usage).await;
+            }
             let mut next = messages.clone();
             next.push(WireMessage {
                 role: "assistant".into(),
@@ -110,7 +169,7 @@ impl<'a> ChatEngine<'a> {
             for call in &result.tool_calls {
                 if self.cancels.is_cancelled(self.session_id) {
                     let _ = channel.send(StreamEvent::Cancelled);
-                    return Ok((String::new(), all_reasoning, total_usage));
+                    return Ok((String::new(), String::new(), total_usage));
                 }
                 let call_id = if call.id.is_empty() { format!("call_{}", call.index) } else { call.id.clone() };
                 let _ = channel.send(StreamEvent::Tool {
@@ -148,7 +207,7 @@ impl<'a> ChatEngine<'a> {
         Box::pin(async move {
             if round >= MAX_TOOL_ROUNDS || self.cancels.is_cancelled(self.session_id) {
                 let _ = channel.send(StreamEvent::Cancelled);
-                return Ok((String::new(), acc_reasoning, total_usage));
+                return Ok((String::new(), String::new(), total_usage));
             }
             let price = if self.custom_price > 0.0 { self.custom_price } else { model_price(&self.provider.model) };
             let result = self.stream_once(messages, tools, channel).await?;
@@ -166,19 +225,45 @@ impl<'a> ChatEngine<'a> {
             });
 
             if result.tool_calls.is_empty() {
-                let _ = channel.send(StreamEvent::Done { content: result.content.clone(), reasoning: acc_reasoning.clone() });
-                return Ok((result.content, acc_reasoning, total_usage));
+                let mut content = result.content;
+                if content.trim().is_empty() && !acc_reasoning.trim().is_empty() {
+                    logger::llm("empty answer after tool rounds, retrying without thinking");
+                    if let Ok(retry) = self.stream_once_with_thinking(messages, tools, channel, Some(false), None).await {
+                        if !retry.content.trim().is_empty() {
+                            content = retry.content;
+                            let prompt = if retry.prompt_tokens > 0 { retry.prompt_tokens } else { UsageStats::estimate(&serde_json::to_string(messages).unwrap_or_default()) };
+                            let completion = if retry.completion_tokens > 0 { retry.completion_tokens } else { UsageStats::estimate(&content) };
+                            total_usage.add(prompt, completion, price);
+                            let _ = channel.send(StreamEvent::Usage {
+                                prompt_tokens: total_usage.prompt_tokens,
+                                completion_tokens: total_usage.completion_tokens,
+                                estimated_cost: total_usage.estimated_cost,
+                            });
+                        }
+                    }
+                }
+                let answer = resolve_answer_content(content, &acc_reasoning);
+                let _ = channel.send(StreamEvent::Done { content: answer.clone(), reasoning: acc_reasoning.clone() });
+                return Ok((answer, acc_reasoning, total_usage));
             }
 
+            let wire_calls: Vec<WireToolCall> = result.tool_calls.iter().map(|c| WireToolCall {
+                id: if c.id.is_empty() { format!("call_{}", c.index) } else { c.id.clone() },
+                kind: "function".into(),
+                function: WireFunctionCall { name: c.name.clone(), arguments: sanitize_arguments(&c.arguments) },
+            }).collect();
+            let signatures: Vec<String> = wire_calls.iter()
+                .map(|call| tool_call_signature(&call.function.name, &call.function.arguments))
+                .collect();
+            if has_repeated_tool_call(messages, &signatures) {
+                logger::llm("repeated tool calls detected in later round, forcing final answer");
+                return self.force_final_answer(messages, channel, &acc_reasoning, total_usage).await;
+            }
             let mut next = messages.to_vec();
             next.push(WireMessage {
                 role: "assistant".into(),
                 content: serde_json::json!(result.content),
-                tool_calls: Some(result.tool_calls.iter().map(|c| WireToolCall {
-                    id: if c.id.is_empty() { format!("call_{}", c.index) } else { c.id.clone() },
-                    kind: "function".into(),
-                    function: WireFunctionCall { name: c.name.clone(), arguments: sanitize_arguments(&c.arguments) },
-                }).collect()),
+                tool_calls: Some(wire_calls),
                 tool_call_id: None,
             });
             for call in &result.tool_calls {
@@ -200,17 +285,29 @@ impl<'a> ChatEngine<'a> {
         tools: &[ToolDefinition],
         channel: &Channel<StreamEvent>,
     ) -> Result<StreamResult> {
+        let reasoning_effort = self.provider.reasoning_effort.as_ref().and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+        });
+        self.stream_once_with_thinking(messages, tools, channel, self.enable_thinking, reasoning_effort).await
+    }
+
+    async fn stream_once_with_thinking(
+        &self,
+        messages: &[WireMessage],
+        tools: &[ToolDefinition],
+        channel: &Channel<StreamEvent>,
+        enable_thinking: Option<bool>,
+        reasoning_effort: Option<String>,
+    ) -> Result<StreamResult> {
         let url = format!("{}/chat/completions", self.provider.base_url.trim_end_matches('/'));
         let req = crate::llm::types::ChatRequest {
             model: self.provider.model.clone(),
             messages: messages.to_vec(),
             stream: true,
             tools: tools.to_vec(),
-            enable_thinking: self.enable_thinking,
-            reasoning_effort: self.provider.reasoning_effort.as_ref().and_then(|value| {
-                let trimmed = value.trim();
-                if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
-            }),
+            enable_thinking,
+            reasoning_effort,
             temperature: self.temperature,
             max_tokens: self.max_tokens,
         };
@@ -250,6 +347,43 @@ impl<'a> ChatEngine<'a> {
             }
         }
         Ok(result)
+    }
+
+    async fn force_final_answer(
+        &self,
+        messages: &[WireMessage],
+        channel: &Channel<StreamEvent>,
+        reasoning: &str,
+        mut total_usage: UsageStats,
+    ) -> Result<(String, String, UsageStats)> {
+        let mut forced = messages.to_vec();
+        forced.push(WireMessage {
+            role: "user".into(),
+            content: serde_json::json!("检测到重复工具调用，请立即停止调用工具，直接基于已有信息给出最终回答。"),
+            tool_calls: None,
+            tool_call_id: None,
+        });
+        let price = if self.custom_price > 0.0 { self.custom_price } else { model_price(&self.provider.model) };
+        match self.stream_once_with_thinking(&forced, &[], channel, Some(false), None).await {
+            Ok(result) => {
+                let prompt = if result.prompt_tokens > 0 { result.prompt_tokens } else { UsageStats::estimate(&serde_json::to_string(&forced).unwrap_or_default()) };
+                let completion = if result.completion_tokens > 0 { result.completion_tokens } else { UsageStats::estimate(&result.content) };
+                total_usage.add(prompt, completion, price);
+                let _ = channel.send(StreamEvent::Usage {
+                    prompt_tokens: total_usage.prompt_tokens,
+                    completion_tokens: total_usage.completion_tokens,
+                    estimated_cost: total_usage.estimated_cost,
+                });
+                let answer = resolve_answer_content(result.content, reasoning);
+                let _ = channel.send(StreamEvent::Done { content: answer.clone(), reasoning: reasoning.to_string() });
+                Ok((answer, reasoning.to_string(), total_usage))
+            }
+            Err(error) => {
+                let answer = format!("检测到重复工具调用，已停止自动尝试。{}\n请补充说明需要生成的具体内容。", error.0);
+                let _ = channel.send(StreamEvent::Done { content: answer.clone(), reasoning: reasoning.to_string() });
+                Ok((answer, reasoning.to_string(), total_usage))
+            }
+        }
     }
 
     fn build_messages(&self, history: &[Message]) -> Vec<WireMessage> {
@@ -298,7 +432,7 @@ impl<'a> ChatEngine<'a> {
         prompt.push_str(&format!("\n\n## 图片输入\n{}\n", image_capability));
         if !self.skills.is_empty() {
             prompt.push_str("\n\n## 可用技能\n");
-            prompt.push_str("当任务匹配某个技能时，调用 activate_skill 工具加载其完整指令并遵循执行。\n");
+            prompt.push_str("当任务匹配某个技能时，必须先调用 activate_skill 加载其指令，再按指令用 read_skill_reference 读取所需参考文件全文并严格遵循。禁止用 read_file / list_files / run_command 查找技能目录或参考文件。\n");
             for (name, desc) in self.skills {
                 prompt.push_str(&format!("- {}：{}\n", name, desc));
             }
@@ -330,11 +464,22 @@ impl<'a> ChatEngine<'a> {
             })),
         ];
         if !self.skills.is_empty() {
-            tools.push(definition("activate_skill", "加载并激活指定技能的详细指令。", serde_json::json!({
+            tools.push(definition("activate_skill", "加载并激活指定技能的详细指令（含参考文件清单）。", serde_json::json!({
                 "type": "object",
                 "properties": { "skill_name": { "type": "string" } },
                 "required": ["skill_name"]
             })));
+            tools.push(definition("read_skill_reference", "按文件名读取已激活技能的参考文件全文。", serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "skill_name": { "type": "string" },
+                    "file_name": { "type": "string" }
+                },
+                "required": ["skill_name", "file_name"]
+            })));
+        }
+        if self.read_only {
+            tools.retain(|tool| matches!(tool.function.name.as_str(), "read_file" | "list_files" | "activate_skill" | "read_skill_reference"));
         }
         tools
     }
@@ -344,8 +489,31 @@ impl<'a> ChatEngine<'a> {
             "activate_skill" => {
                 let parsed: serde_json::Value = serde_json::from_str(args).unwrap_or_default();
                 let skill_name = parsed.get("skill_name").and_then(|v| v.as_str()).unwrap_or("");
-                self.skill_instructions.get(skill_name).cloned()
-                    .unwrap_or_else(|| format!("激活技能失败：找不到技能 {}", skill_name))
+                let result = self.skill_instructions.get(skill_name).cloned()
+                    .unwrap_or_else(|| format!("激活技能失败：找不到技能 {}", skill_name));
+                crate::logger::info(&format!(
+                    "[skill] 激活技能 name={} found={} chars={}",
+                    skill_name,
+                    !result.starts_with("激活技能失败"),
+                    result.chars().count()
+                ));
+                result
+            }
+            "read_skill_reference" => {
+                let parsed: serde_json::Value = serde_json::from_str(args).unwrap_or_default();
+                let skill_name = parsed.get("skill_name").and_then(|v| v.as_str()).unwrap_or("");
+                let file_name = parsed.get("file_name").and_then(|v| v.as_str()).unwrap_or("");
+                let key = format!("__ref__:{}:{}", skill_name, file_name);
+                let result = self.skill_instructions.get(&key).cloned()
+                    .unwrap_or_else(|| format!("找不到技能 {} 的参考文件 {}；可用文件见 activate_skill 返回的清单", skill_name, file_name));
+                crate::logger::info(&format!(
+                    "[skill] 读取参考文件 skill={} file={} found={} chars={}",
+                    skill_name,
+                    file_name,
+                    !result.starts_with("找不到"),
+                    result.chars().count()
+                ));
+                result
             }
             "read_file" | "write_file" | "list_files" | "run_command" => {
                 match exec_tool(self.tool_ctx, name, args) {
