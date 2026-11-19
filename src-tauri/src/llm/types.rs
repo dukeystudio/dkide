@@ -140,6 +140,7 @@ pub struct StreamResult {
 }
 
 /// 本块解析出的一个文本增量（正文 or 思考过程）
+#[derive(Debug, Clone, PartialEq)]
 pub enum SsePiece {
     Text(String),
     Reasoning(String),

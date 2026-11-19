@@ -92,7 +92,7 @@ impl<'a> ChatEngine<'a> {
             let wire_calls: Vec<WireToolCall> = result.tool_calls.iter().map(|c| WireToolCall {
                 id: if c.id.is_empty() { format!("call_{}", c.index) } else { c.id.clone() },
                 kind: "function".into(),
-                function: WireFunctionCall { name: c.name.clone(), arguments: c.arguments.clone() },
+                function: WireFunctionCall { name: c.name.clone(), arguments: sanitize_arguments(&c.arguments) },
             }).collect();
             let mut next = messages.clone();
             next.push(WireMessage {
@@ -167,7 +167,7 @@ impl<'a> ChatEngine<'a> {
                 tool_calls: Some(result.tool_calls.iter().map(|c| WireToolCall {
                     id: if c.id.is_empty() { format!("call_{}", c.index) } else { c.id.clone() },
                     kind: "function".into(),
-                    function: WireFunctionCall { name: c.name.clone(), arguments: c.arguments.clone() },
+                    function: WireFunctionCall { name: c.name.clone(), arguments: sanitize_arguments(&c.arguments) },
                 }).collect()),
                 tool_call_id: None,
             });
@@ -334,10 +334,44 @@ impl<'a> ChatEngine<'a> {
     }
 }
 
+/// 把模型返回的 arguments 规范化为合法 JSON 字符串。
+/// 上游（OpenAI 兼容）要求 tool_call.arguments 必须是合法 JSON；
+/// 模型偶发返回空串/被截断/非 JSON，直接回传会触发 400 "arguments must be valid JSON"。
+fn sanitize_arguments(args: &str) -> String {
+    let trimmed = args.trim();
+    if trimmed.is_empty() {
+        return "{}".into();
+    }
+    if serde_json::from_str::<serde_json::Value>(trimmed).is_ok() {
+        trimmed.to_string()
+    } else {
+        // 兜底：原样回传会让上游报错，这里降级为空对象
+        "{}".into()
+    }
+}
+
 fn definition(name: &str, description: &str, parameters: serde_json::Value) -> ToolDefinition {
     ToolDefinition {
         kind: "function".into(),
         function: ToolFunction { name: name.into(), description: description.into(), parameters },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_arguments;
+
+    #[test]
+    fn valid_json_kept() {
+        assert_eq!(sanitize_arguments("{\"a\":1}"), "{\"a\":1}");
+        assert_eq!(sanitize_arguments(""), "{}");
+        assert_eq!(sanitize_arguments("   "), "{}");
+    }
+
+    #[test]
+    fn invalid_json_falls_back() {
+        assert_eq!(sanitize_arguments("not json"), "{}");
+        assert_eq!(sanitize_arguments("{\"a\":"), "{}");
     }
 }
 
