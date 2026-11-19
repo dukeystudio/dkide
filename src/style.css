@@ -78,13 +78,22 @@ a { color: var(--primary); }
   transition: width .2s, min-width .2s;
 }
 .sidebar.collapsed { width: 64px; min-width: 64px; }
+/* 折叠态：品牌点、展开按钮、导航项纵向单列，避免横向溢出导致点不开 */
+.sidebar.collapsed .sidebar-header { flex-direction: column; gap: 12px; padding: 14px 0 10px; }
+.sidebar.collapsed .brand { justify-content: center; }
 .sidebar.collapsed .brand span:not(.brand-dot),
+.sidebar.collapsed .nav-label,
+.sidebar.collapsed .account-label { display: none; }
 .sidebar.collapsed .session-list,
-.sidebar.collapsed .new-chat-btn,
-.sidebar.collapsed .nav-btn span:not(.nav-icon),
-.sidebar.collapsed .nav-btn { font-size: 0; }
-.sidebar.collapsed .nav-btn { justify-content: center; }
-.sidebar.collapsed .nav-icon { font-size: 16px; }
+.sidebar.collapsed .new-chat-btn { display: none; }
+.sidebar.collapsed .new-chat-btn { margin: 0 12px 8px; }
+.sidebar.collapsed .search-box { margin: 0 10px 8px; }
+.sidebar.collapsed .usage-mini { display: none; }
+.sidebar.collapsed .search-box input { text-align: center; padding: 7px 4px; }
+.sidebar.collapsed .sidebar-footer { padding: 10px; gap: 4px; }
+.sidebar.collapsed .nav-btn { justify-content: center; padding: 10px 0; gap: 0; }
+.sidebar.collapsed .nav-icon { font-size: 18px; }
+.sidebar.collapsed .collapse-btn { font-size: 18px; padding: 6px 12px; }
 .sidebar-header { padding: 16px; display: flex; align-items: center; justify-content: space-between; }
 .brand { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 16px; color: var(--primary); }
 .brand-dot { width: 26px; height: 26px; border-radius: 8px; background: linear-gradient(135deg, #6366f1, #a855f7); display: inline-block; }
@@ -205,11 +214,10 @@ a { color: var(--primary); }
 .modal h3 { margin: 0 0 12px; }
 .modal p { color: var(--text-muted); line-height: 1.6; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
-.header-right { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .account-wrap { position: relative; }
-.account-chip { display: flex; align-items: center; gap: 5px; max-width: 130px; padding: 4px 8px; border-radius: 6px; background: var(--bg-subtle); border: 1px solid var(--border); color: var(--text); font-size: 12px; }
-.account-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.account-menu { position: absolute; top: calc(100% + 6px); right: 0; min-width: 180px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); padding: 8px; z-index: 60; }
+.account-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-menu { position: absolute; bottom: calc(100% + 6px); left: 0; min-width: 180px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); padding: 8px; z-index: 60; }
+.sidebar.collapsed .account-menu { left: calc(100% + 4px); bottom: 0; }
 .account-menu-title { font-weight: 600; font-size: 13px; padding: 4px 6px; overflow: hidden; text-overflow: ellipsis; }
 .account-menu-sub { font-size: 11px; color: var(--text-muted); padding: 0 6px 6px; }
 .account-menu-item { width: 100%; text-align: left; padding: 7px 8px; border-radius: 6px; background: transparent; color: var(--danger); font-size: 12px; }

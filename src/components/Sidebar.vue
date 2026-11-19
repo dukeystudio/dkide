@@ -19,6 +19,14 @@ const providerName = computed(() => {
   return p?.name ?? '';
 });
 
+function onAccountClick() {
+  if (!auth.isLoggedIn) {
+    auth.requireLogin('登录后可开始对话');
+    return;
+  }
+  accountMenuOpen.value = !accountMenuOpen.value;
+}
+
 async function doLogout() {
   accountMenuOpen.value = false;
   await auth.logout();
@@ -29,22 +37,9 @@ async function doLogout() {
   <aside class="sidebar" :class="{ collapsed }">
     <div class="sidebar-header">
       <div class="brand"><span class="brand-dot"></span><span v-if="!collapsed">都客AI助手</span></div>
-      <div class="header-right">
-        <div v-if="auth.isLoggedIn" class="account-wrap">
-          <button class="account-chip" @click="accountMenuOpen = !accountMenuOpen" :title="auth.account">
-            <span>👤</span><span v-if="!collapsed" class="account-name">{{ auth.account }}</span>
-          </button>
-          <div v-if="accountMenuOpen" class="account-menu">
-            <div class="account-menu-title">{{ auth.account }}</div>
-            <div v-if="auth.session?.expire_display" class="account-menu-sub">{{ auth.session.expire_display }}</div>
-            <button class="account-menu-item" @click="doLogout">退出登录</button>
-          </div>
-        </div>
-        <button v-else class="btn btn-sm btn-primary" @click="auth.requireLogin('登录后可开始对话')" title="登录">登录</button>
-        <button class="icon-btn" @click="emit('toggleCollapse')" :title="collapsed ? '展开' : '收起'">
-          {{ collapsed ? '»' : '«' }}
-        </button>
-      </div>
+      <button class="icon-btn collapse-btn" @click="emit('toggleCollapse')" :title="collapsed ? '展开侧栏' : '收起侧栏'">
+        {{ collapsed ? '»' : '«' }}
+      </button>
     </div>
 
     <template v-if="page === 'chat'">
@@ -75,17 +70,34 @@ async function doLogout() {
     </template>
 
     <div class="sidebar-footer">
-      <button class="nav-btn" :class="{ active: page === 'chat' }" @click="emit('navigate', 'chat')">
-        <span class="nav-icon">💬</span><span>对话</span>
+      <div class="account-wrap">
+        <button
+          class="nav-btn account-entry"
+          :class="{ active: accountMenuOpen }"
+          @click="onAccountClick"
+          :title="auth.isLoggedIn ? auth.account : '登录'"
+        >
+          <span class="nav-icon">👤</span>
+          <span class="account-label">{{ auth.isLoggedIn ? auth.account : '登录' }}</span>
+        </button>
+        <div v-if="accountMenuOpen && auth.isLoggedIn" class="account-menu">
+          <div class="account-menu-title">{{ auth.account }}</div>
+          <div v-if="auth.session?.expire_display" class="account-menu-sub">{{ auth.session.expire_display }}</div>
+          <button class="account-menu-item" @click="doLogout">退出登录</button>
+        </div>
+      </div>
+
+      <button class="nav-btn" :class="{ active: page === 'chat' }" @click="emit('navigate', 'chat')" title="对话">
+        <span class="nav-icon">💬</span><span class="nav-label">对话</span>
       </button>
-      <button class="nav-btn" :class="{ active: page === 'skills' }" @click="emit('navigate', 'skills')">
-        <span class="nav-icon">🧩</span><span>技能管理</span>
+      <button class="nav-btn" :class="{ active: page === 'skills' }" @click="emit('navigate', 'skills')" title="技能管理">
+        <span class="nav-icon">🧩</span><span class="nav-label">技能管理</span>
       </button>
-      <button class="nav-btn" :class="{ active: page === 'settings' }" @click="emit('navigate', 'settings')">
-        <span class="nav-icon">⚙️</span><span>模型设置</span>
+      <button class="nav-btn" :class="{ active: page === 'settings' }" @click="emit('navigate', 'settings')" title="模型设置">
+        <span class="nav-icon">⚙️</span><span class="nav-label">模型设置</span>
       </button>
-      <button class="nav-btn" :class="{ active: page === 'about' }" @click="emit('navigate', 'about')">
-        <span class="nav-icon">ℹ️</span><span>关于</span>
+      <button class="nav-btn" :class="{ active: page === 'about' }" @click="emit('navigate', 'about')" title="关于">
+        <span class="nav-icon">ℹ️</span><span class="nav-label">关于</span>
       </button>
       <div v-if="!collapsed" class="skill-meta" style="padding:8px 12px 0;">{{ providerName }}</div>
     </div>
