@@ -1,0 +1,167 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  # 分别在两个架构的 macOS runner 上构建 DMG
+  build:
+    name: Build DMG (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest      # Apple Silicon (arm64) — macos-latest 现为 arm64
+            arch: aarch64
+          - os: macos-15-intel    # Intel (x86_64)
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # 把 tag 版本号（去掉 v）同步到三个版本文件，保证产物版本一致
+      - name: Sync version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          node -e 'const fs=require("fs");const p=require("./package.json");p.version=process.argv[1];fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")' "$VERSION"
+          node -e 'const fs=require("fs");const p=require("./src-tauri/tauri.conf.json");p.version=process.argv[1];fs.writeFileSync("src-tauri/tauri.conf.json",JSON.stringify(p,null,2)+"\n")' "$VERSION"
+          sed -i '' "s/^version = .*/version = \"$VERSION\"/" src-tauri/Cargo.toml
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Tauri app
+        run: npm run tauri:build
+
+      - name: Locate DMG
+        run: |
+          DMG=$(find src-tauri/target/release/bundle/dmg -name '*.dmg' -type f | head -1)
+          if [ -z "$DMG" ]; then echo "未找到 DMG 产物"; exit 1; fi
+          echo "DMG_PATH=$DMG" >> "$GITHUB_ENV"
+          echo "DMG_NAME=$(basename "$DMG")" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dmg-${{ matrix.arch }}
+          path: ${{ env.DMG_PATH }}
+          if-no-files-found: error
+
+  # 汇总产物：创建 Release + 生成 Cask + 推送 tap 仓库
+  release:
+    name: Publish release & cask
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare DMG paths
+        run: |
+          A=$(find artifacts/dmg-aarch64 -name '*.dmg' -type f | head -1)
+          X=$(find artifacts/dmg-x64 -name '*.dmg' -type f | head -1)
+          [ -n "$A" ] && [ -n "$X" ] || { echo "缺少 DMG 产物"; exit 1; }
+          echo "DMG_A=$A" >> "$GITHUB_ENV"
+          echo "DMG_X=$X" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.DMG_A }}
+            ${{ env.DMG_X }}
+          generate_release_notes: true
+          name: 都客AI助手 v${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate Cask and push to tap
+        env:
+          VERSION: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          TAP_REPO: dukeystudio/homebrew-tap
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${VERSION#v}"
+          BASE="https://github.com/${REPO}/releases/download/v${VERSION}"
+
+          SHA_A=$(sha256sum "$DMG_A" | cut -d' ' -f1)
+          SHA_X=$(sha256sum "$DMG_X" | cut -d' ' -f1)
+          NAME_A=$(basename "$DMG_A")
+          NAME_X=$(basename "$DMG_X")
+          enc() { python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$1"; }
+          ENC_A=$(enc "$NAME_A")
+          ENC_X=$(enc "$NAME_X")
+
+          mkdir -p tap/Casks
+          cat > tap/Casks/dkide.rb <<EOF
+          cask "dkide" do
+            version "$VERSION"
+
+            on_arm do
+              url "$BASE/$ENC_A"
+              sha256 "$SHA_A"
+            end
+            on_intel do
+              url "$BASE/$ENC_X"
+              sha256 "$SHA_X"
+            end
+
+            name "都客AI助手"
+            name "dkide"
+            desc "Local-first desktop AI assistant with skills and tools"
+            homepage "https://github.com/${REPO}"
+
+            app "都客AI助手.app"
+
+            postflight do
+              system_command "/usr/bin/xattr",
+                             args: ["-c", "com.apple.quarantine", "\#{appdir}/都客AI助手.app"],
+                             sudo: false
+            end
+
+            zap trash: [
+              "~/Library/Application Support/com.dkide.app",
+              "~/Library/Logs/dkide",
+              "~/Library/Saved Application State/com.dkide.app.savedState",
+            ]
+          end
+          EOF
+
+          echo "生成的 Cask:"
+          cat tap/Casks/dkide.rb
+
+          # 推送到 tap 仓库（需要 TAP_TOKEN secret，具备 repo 写权限）
+          if [ -z "${TAP_TOKEN:-}" ]; then
+            echo "未配置 TAP_TOKEN secret，跳过 tap 推送。请手动更新 tap 仓库。"
+            exit 0
+          fi
+          git clone --depth=1 "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" tap-repo
+          mkdir -p tap-repo/Casks
+          cp tap/Casks/dkide.rb tap-repo/Casks/dkide.rb
+          cd tap-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/dkide.rb
+          if git diff --cached --quiet; then
+            echo "Cask 无变更，无需提交"
+          else
+            git commit -m "chore: update dkide to v${VERSION}"
+            git push origin HEAD
+          fi

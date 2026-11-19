@@ -1,0 +1,14 @@
+node_modules
+dist
+.DS_Store
+*.log
+src-tauri/target
+src-tauri/gen
+
+# 本地密钥回退文件（钥匙串不可用时生成，不应提交）
+src-tauri/*.dat
+**/keys.dat
+
+# 临时/缓存
+*.tmp
+*.corrupted.json

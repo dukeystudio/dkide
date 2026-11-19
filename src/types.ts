@@ -1,0 +1,102 @@
+export interface Provider {
+  id: string;
+  name: string;
+  base_url: string;
+  api_key: string;
+  model: string;
+}
+
+export interface AppConfig {
+  providers: Provider[];
+  active_provider_id: string | null;
+  enabled_skills: string[];
+  system_prompt: string;
+  workspace_path: string;
+  version: number;
+  theme: 'light' | 'dark' | 'system';
+  tool_policy: 'ask' | 'auto' | 'deny';
+  marketplace_url: string;
+  cost_per_million: number;
+  token_budget: number;
+}
+
+export type Role = 'system' | 'user' | 'assistant' | 'tool';
+
+export interface Message {
+  id: string;
+  role: Role;
+  content: string;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
+  created_at: number;
+}
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+export interface UsageStats {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  requests: number;
+  estimated_cost: number;
+}
+
+export interface Session {
+  id: string;
+  title: string;
+  messages: Message[];
+  created_at: number;
+  updated_at: number;
+  pinned: boolean;
+  usage: UsageStats;
+}
+
+export interface SkillMeta {
+  name: string;
+  description: string;
+  version: string;
+  author: string;
+  allowed_tools: string[];
+}
+
+export interface Skill {
+  meta: SkillMeta;
+  instructions: string;
+  path: string;
+  dir_name: string;
+  enabled: boolean;
+}
+
+export interface MarketSkill {
+  name: string;
+  description: string;
+  author: string;
+  url: string;
+}
+
+export interface Approval {
+  id: string;
+  tool: string;
+  summary: string;
+}
+
+export interface ToolCallView {
+  name: string;
+  args: string;
+  result?: string;
+  status: 'running' | 'done' | 'error';
+}
+
+export type StreamEvent =
+  | { type: 'delta'; text: string }
+  | { type: 'tool'; name: string; args: string }
+  | { type: 'tool_result'; name: string; result: string }
+  | { type: 'approval_required'; id: string; tool: string; summary: string }
+  | { type: 'usage'; prompt_tokens: number; completion_tokens: number; estimated_cost: number }
+  | { type: 'cancelled' }
+  | { type: 'done'; content: string }
+  | { type: 'error'; message: string };
