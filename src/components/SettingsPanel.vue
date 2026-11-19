@@ -2,18 +2,14 @@
 import { ref, computed, watch } from 'vue';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useChatStore } from '../store';
-import { api } from '../api';
 import { useThemeStore, ACCENTS, THEME_LABELS } from '../themeStore';
-import type { AppConfig, Provider } from '../types';
+import type { AppConfig } from '../types';
 
 const theme = useThemeStore();
 const accents = Object.keys(ACCENTS) as Array<keyof typeof ACCENTS>;
 
 const store = useChatStore();
 const result = ref('');
-const testing = ref(false);
-const testProviderId = ref('');
-const testResults = ref<Record<string, { ok: boolean; text: string }>>({});
 const saved = ref(true);
 // 使用本地草稿，避免未点保存就改到内存配置导致前后端静默分叉
 const draft = ref<AppConfig | null>(null);
@@ -26,74 +22,12 @@ watch(() => store.config, (c) => {
 
 watch(draft, () => { saved.value = false; }, { deep: true });
 
-/** 常用服务商预设：选中即填好 base_url 与模型，用户再各自申请 key 填入 */
-const presets = [
-  { name: 'Agnes（国内）', url: 'https://api.agnes-ai.cn/v1', model: 'agnes-3.0-flash', apply: 'https://platform.agnes-ai.cn' },
-  { name: 'OpenAI', url: 'https://api.openai.com/v1', model: 'gpt-4o-mini', apply: 'https://platform.openai.com/api-keys' },
-  { name: 'DeepSeek', url: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apply: 'https://platform.deepseek.com/api_keys' },
-  { name: 'Moonshot', url: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k', apply: 'https://platform.moonshot.cn' },
-  { name: '智谱', url: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4', apply: 'https://open.bigmodel.cn' },
-];
-
-/** 按 base_url 反查预设的 key 申请链接；没有匹配则返回 null */
-function applyLink(p: Provider): string | null {
-  const host = (u: string) => { try { return new URL(u).host; } catch { return u; } };
-  return presets.find((x) => host(x.url) === host(p.base_url))?.apply ?? null;
-}
-
-function addProvider(preset?: (typeof presets)[0]) {
-  if (!config.value) return;
-  config.value.providers.push({
-    id: crypto.randomUUID(),
-    name: preset?.name ?? '新中转站',
-    base_url: preset?.url ?? 'https://api.openai.com/v1',
-    api_key: '',
-    model: preset?.model ?? 'gpt-4o-mini',
-  });
-}
-
-function removeProvider(id: string) {
-  if (!config.value || config.value.providers.length <= 1) return;
-  config.value.providers = config.value.providers.filter((p) => p.id !== id);
-  if (config.value.active_provider_id === id) {
-    config.value.active_provider_id = config.value.providers[0].id;
-  }
-}
-
 async function save() {
   if (!config.value) return;
   const next = JSON.parse(JSON.stringify(config.value)) as AppConfig;
   await store.saveConfig(next);
   saved.value = true;
   result.value = '设置已保存';
-  testResults.value = {}; // 配置已变，旧的连接测试结果失效，清掉避免误导
-}
-
-// 该 provider 是否正在测试中（防止重复发同一请求）
-function isTesting(id: string) { return testing.value && testProviderId.value === id; }
-async function test(p: Provider) {
-  // 已在测该 provider 就直接返回，避免重复发
-  if (isTesting(p.id)) return;
-  // 快照，避免等待期间表单被改导致结果与显示错位
-  const snap: Provider = JSON.parse(JSON.stringify(p));
-  testProviderId.value = p.id;
-  testing.value = true;
-  testResults.value[p.id] = { ok: false, text: '测试中…' };
-  try {
-    const ok = await api.testProvider(snap);
-    // 仅当期间没被别的测试覆盖时才写（防止 A 慢 B 快，A 回来后把 B 的结果盖掉）
-    testResults.value[p.id] = { ok: true, text: `✓ ${ok}` };
-    result.value = ok;
-  } catch (e: any) {
-    const msg = typeof e === 'string' ? e : e?.message ?? String(e);
-    testResults.value[p.id] = { ok: false, text: `✗ ${msg}` };
-    result.value = `失败: ${msg}`;
-  } finally {
-    if (testProviderId.value === p.id) {
-      testProviderId.value = '';
-      testing.value = false;
-    }
-  }
 }
 
 async function pickWorkspace() {
@@ -119,40 +53,6 @@ function setThinking(v: string) {
       <p style="color:var(--text-muted);margin-top:0;">配置 OpenAI 兼容中转站，可添加多个并切换。</p>
 
       <template v-if="config">
-        <div v-for="p in config.providers" :key="p.id" class="provider-item" :class="{ active: config.active_provider_id === p.id }">
-          <div class="provider-head">
-            <label style="display:flex;align-items:center;gap:8px;font-weight:600;">
-              <input type="radio" :value="p.id" v-model="config.active_provider_id" name="active" />
-              {{ p.name }}
-            </label>
-            <button class="btn btn-danger btn-sm" @click="removeProvider(p.id)">删除</button>
-          </div>
-          <div class="row">
-            <div class="field"><label>名称</label><input v-model="p.name" /></div>
-            <div class="field"><label>模型名称</label><input v-model="p.model" placeholder="gpt-4o-mini" /></div>
-          </div>
-          <div class="field"><label>Base URL（以 /v1 结尾）</label><input v-model="p.base_url" /></div>
-          <div class="field">
-            <label>API Key（存入系统钥匙串）</label>
-            <input v-model="p.api_key" type="password" placeholder="sk-... / cpk-..." />
-          </div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <button class="btn btn-sm" :disabled="testing && testProviderId !== p.id" @click="test(p)">
-              {{ testing && testProviderId === p.id ? '测试中…' : '测试连接' }}
-            </button>
-            <span v-if="testResults[p.id]" class="test-result" :class="{ ok: testResults[p.id].ok }">{{ testResults[p.id].text }}</span>
-            <a v-if="applyLink(p)" :href="applyLink(p) as string" target="_blank" class="apply-link" rel="noopener">没有 key？去申请 →</a>
-          </div>
-        </div>
-
-        <div class="preset-group">
-          <div class="preset-label">常用服务商（点选自动填好 Base URL 与模型，再各自申请 key）</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <button v-for="p in presets" :key="p.name" class="btn btn-sm" @click="addProvider(p)">+ {{ p.name }}</button>
-            <button class="btn btn-sm" @click="addProvider()">+ 自定义</button>
-          </div>
-        </div>
-
         <div class="card">
           <div class="card-title">工具工作目录</div>
           <p style="color:var(--text-muted);font-size:12px;margin-top:0;">文件工具与该目录交互，路径越界会被拒绝。留空则使用应用数据目录。</p>

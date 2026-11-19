@@ -8,7 +8,7 @@ import { renderMarkdown, copyText } from '../markdown';
 import type { Provider, Message, ToolCallView, GeneratedFile } from '../types';
 
 const props = defineProps<{ provider: Provider | null }>();
-const emit = defineEmits<{ openSettings: []; openSkills: [] }>();
+const emit = defineEmits<{ openSettings: [opts?: { focusAdd?: boolean }]; openSkills: [] }>();
 const store = useChatStore();
 const skills = useSkillsStore();
 const input = ref('');
@@ -17,7 +17,6 @@ const expandedTools = ref<Set<string>>(new Set());
 const editingId = ref<string | null>(null);
 const editContent = ref('');
 const copiedId = ref('');
-const modelMenuOpen = ref(false);
 const skillMenuOpen = ref(false);
 
 const session = computed(() => store.currentSession);
@@ -68,7 +67,6 @@ function scrollToBottom(force = false) {
 function onDocClick(e: MouseEvent) {
   const el = e.target as HTMLElement;
   if (!el.closest('.toolbar-menu')) {
-    modelMenuOpen.value = false;
     skillMenuOpen.value = false;
   }
 }
@@ -105,25 +103,28 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-async function selectProvider(p: Provider) {
-  modelMenuOpen.value = false;
+/** 原生 select 切换模型 */
+const providersList = computed(() => store.config?.providers ?? []);
+async function onModelChange(id: string) {
   const c = store.config;
-  if (!c || c.active_provider_id === p.id) return;
-  await store.saveConfig({ ...c, active_provider_id: p.id });
+  if (!c || !id || c.active_provider_id === id) return;
+  await store.saveConfig({ ...c, active_provider_id: id });
+}
+/** 打开服务商弹窗并聚焦"添加服务商" */
+function goAddProvider() {
+  store.focusAddProvider = true;
+  store.providerDialogOpen = true;
 }
 
+/** 点模型下拉：若没有任何带 key 的服务商，直接去配置页 */
 function onModelButtonClick() {
   if (!store.config?.providers.some((p) => p.api_key)) {
     emit('openSettings');
-    return;
   }
-  modelMenuOpen.value = !modelMenuOpen.value;
-  skillMenuOpen.value = false;
 }
 
 function onSkillButtonClick() {
   skillMenuOpen.value = !skillMenuOpen.value;
-  modelMenuOpen.value = false;
 }
 
 function toggleTool(idx: number) {
@@ -354,29 +355,21 @@ async function onBubbleClick(e: MouseEvent) {
           ></textarea>
           <div class="composer-toolbar">
             <div class="toolbar-left">
-              <div class="toolbar-menu">
-                <button class="toolbar-btn" :class="{ open: modelMenuOpen }" @click="onModelButtonClick">
-                  <span class="tb-icon">◇</span>
-                  <span class="tb-label">{{ props.provider ? props.provider.model : '选择模型' }}</span>
-                  <span class="tb-caret">▾</span>
-                </button>
-                <div v-if="modelMenuOpen" class="toolbar-popover model-popover" @click.stop>
-                  <div class="popover-head">切换模型</div>
-                  <button
-                    v-for="p in store.config?.providers ?? []"
-                    :key="p.id"
-                    class="popover-item"
-                    :class="{ selected: p.id === store.config?.active_provider_id }"
-                    @click="selectProvider(p)"
-                  >
-                    <span class="pi-check">{{ p.id === store.config?.active_provider_id ? '✓' : '' }}</span>
-                    <span class="pi-main">
-                      <span class="pi-name">{{ p.name }}</span>
-                      <span class="pi-sub">{{ p.model }} · {{ p.base_url }}</span>
-                    </span>
-                  </button>
-                  <button class="popover-foot" @click="modelMenuOpen = false; emit('openSettings')">⚙️ 管理模型服务商</button>
-                </div>
+              <div class="toolbar-menu model-select-wrap">
+                <span class="tb-icon">◇</span>
+                <select
+                  class="model-select"
+                  :value="store.config?.active_provider_id"
+                  :disabled="!providersList.length"
+                  @change="onModelChange(($event.target as HTMLSelectElement).value)"
+                  @click="onModelButtonClick"
+                >
+                  <option v-if="!providersList.length" value="">未配置模型</option>
+                  <option v-for="p in providersList" :key="p.id" :value="p.id">
+                    {{ p.name }} · {{ p.model }}
+                  </option>
+                </select>
+                <button class="tb-add" title="添加模型（到配置页）" @click="goAddProvider">＋</button>
               </div>
 
               <div class="toolbar-menu">

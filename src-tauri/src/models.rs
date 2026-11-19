@@ -171,10 +171,6 @@ impl Message {
         }
     }
 
-    pub fn assistant(content: impl Into<String>) -> Self {
-        Self::assistant_with(content, None)
-    }
-
     /// 带思考过程的助手消息（reasoning 为空则不存）
     pub fn assistant_with(content: impl Into<String>, reasoning: Option<String>) -> Self {
         Self {

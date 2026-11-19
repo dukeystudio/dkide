@@ -9,6 +9,7 @@ import SkillsPanel from './components/SkillsPanel.vue';
 import AboutPanel from './components/AboutPanel.vue';
 import LoginDialog from './components/LoginDialog.vue';
 import ApprovalDialog from './components/ApprovalDialog.vue';
+import ProviderDialog from './components/ProviderDialog.vue';
 
 type Page = 'chat' | 'settings' | 'skills' | 'about';
 const page = ref<Page>('chat');
@@ -44,10 +45,18 @@ const activeProvider = computed(() => {
   return c.providers.find((p) => p.id === c.active_provider_id) ?? c.providers[0];
 });
 
-function onNavigate(p: Page) { page.value = p; }
-function goSettings() {
+function onNavigate(p: Page) {
+  // "模型设置"改为打开服务商配置弹窗，不再切整页
+  if (p === 'settings') { openProviderDialog(); return; }
+  page.value = p;
+}
+function openProviderDialog(focusAdd = false) {
   store.providerRequired = false;
-  page.value = 'settings';
+  store.focusAddProvider = focusAdd;
+  store.providerDialogOpen = true;
+}
+function goSettings() {
+  openProviderDialog();
 }
 </script>
 
@@ -67,7 +76,7 @@ function goSettings() {
       <ChatView
         v-show="page === 'chat'"
         :provider="activeProvider"
-        @open-settings="page = 'settings'"
+        @open-settings="openProviderDialog(($event?.focusAdd) ?? false)"
         @open-skills="page = 'skills'"
       />
       <SettingsPanel v-if="page === 'settings'" />
@@ -76,6 +85,7 @@ function goSettings() {
     </main>
   </div>
 
+  <ProviderDialog />
   <ApprovalDialog :approvals="store.pendingApprovals" @respond="store.respondApproval($event.id, $event.approved)" />
   <LoginDialog />
 

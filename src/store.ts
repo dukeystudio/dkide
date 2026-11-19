@@ -12,6 +12,10 @@ export const useChatStore = defineStore('chat', () => {
   const error = ref('');
   const searchQuery = ref('');
   const providerRequired = ref(false);
+  /** 是否打开"服务商配置"弹窗 */
+  const providerDialogOpen = ref(false);
+  /** 打开弹窗时是否自动聚焦/滚动到"添加服务商"区 */
+  const focusAddProvider = ref(false);
 
   // 按会话隔离的流式状态
   const streamingIds = ref<Set<string>>(new Set());
@@ -330,7 +334,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   return {
-    sessions, currentId, currentSession, filteredSessions, config, error, searchQuery, providerRequired,
+    sessions, currentId, currentSession, filteredSessions, config, error, searchQuery, providerRequired, providerDialogOpen, focusAddProvider,
     streamingIds, totalUsage, pendingApprovals,
     isStreaming, textFor, reasoningFor, toolsFor, filesFor, usageFor,
     init, newSession, selectSession, deleteSession, renameSession, togglePin,
