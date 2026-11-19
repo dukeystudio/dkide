@@ -62,8 +62,21 @@ pub fn save_config(state: State<'_, AppState>, config: AppConfig) -> Result<()> 
 
 #[tauri::command]
 pub async fn test_provider(provider: Provider, http: State<'_, reqwest::Client>) -> Result<String> {
+    // 前置拦截：缺关键配置时直接给明确提示，而不是发一个必然失败的请求
+    if provider.base_url.trim().is_empty() {
+        return Err(AppError("请先填写 Base URL".into()));
+    }
+    if provider.api_key.trim().is_empty() {
+        return Err(AppError("请先填写 API Key".into()));
+    }
+    if provider.model.trim().is_empty() {
+        return Err(AppError("请先填写模型名称".into()));
+    }
+
     let url = format!("{}/chat/completions", provider.base_url.trim_end_matches('/'));
+    // 测试连接是轻量 ping，30s 足够；避免继承全局 300s 导致按钮长时间挂死无反馈
     let resp = http.post(&url)
+        .timeout(std::time::Duration::from_secs(30))
         .header("Authorization", format!("Bearer {}", provider.api_key))
         .header("Content-Type", "application/json")
         .json(&serde_json::json!({
@@ -72,15 +85,38 @@ pub async fn test_provider(provider: Provider, http: State<'_, reqwest::Client>)
             "stream": false,
             "max_tokens": 16,
         }))
-        .send().await?;
+        .send()
+        .await
+        .map_err(|e| AppError(friendly_req_error(&e)))?;
+
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
     if status.is_success() {
         Ok("连接成功".into())
     } else {
-        // 修复：按字符截断，避免按字节切在 UTF-8 字符中间导致 panic
-        let safe: String = text.chars().take(300).collect();
-        Err(AppError(format!("连接失败 ({}): {}", status, safe)))
+        // 人话化：按状态码映射常见原因，避免把英文 JSON 响应体直接丢给用户
+        let reason = match status.as_u16() {
+            401 => "认证失败：API Key 无效或过期，请检查后重试".into(),
+            403 => "权限被拒：该 Key 无访问权限或已被禁用".into(),
+            404 => "地址不存在：Base URL 或模型名不正确".into(),
+            429 => "请求过多：触发限流，请稍后再试".into(),
+            _ => {
+                let safe: String = text.chars().take(160).collect();
+                format!("连接失败 (HTTP {})：{}", status.as_u16(), if safe.is_empty() { "无响应体" } else { &safe })
+            }
+        };
+        Err(AppError(reason))
+    }
+}
+
+/// 把网络层错误转成对用户友好的提示（超时 / 连接失败 / DNS 等）
+fn friendly_req_error(e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        "连接超时（30 秒）：请检查 Base URL 是否正确、网络是否可达".into()
+    } else if e.is_connect() {
+        "无法连接：请检查 Base URL 与网络（含防火墙/代理）".into()
+    } else {
+        format!("请求失败：{}", e)
     }
 }
 

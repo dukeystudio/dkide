@@ -1,0 +1,34 @@
+{
+  "name": "_auto_65e52c9b703d4da5800355d789c3920e",
+  "mainConversationId": "65e52c9b703d4da5800355d789c3920e",
+  "workspacePath": "/Users/project/dkide",
+  "createdAt": "2026-11-19T10:08:20.265Z",
+  "options": {
+    "workspacePath": "/Users/project/dkide",
+    "isAutoTeam": true
+  },
+  "isAutoTeam": true,
+  "members": [
+    {
+      "memberId": "TechLead@_auto_65e52c9b703d4da5800355d789c3920e",
+      "name": "TechLead",
+      "role": "技术总监自检",
+      "sessionId": "28a63c9c5b684ac5bcc75251c01d7182",
+      "status": "running"
+    },
+    {
+      "memberId": "Tester@_auto_65e52c9b703d4da5800355d789c3920e",
+      "name": "Tester",
+      "role": "测试工程师自检",
+      "sessionId": "9646c4c7af9b4dbf9bf5d7810fdf6965",
+      "status": "running"
+    },
+    {
+      "memberId": "PM@_auto_65e52c9b703d4da5800355d789c3920e",
+      "name": "PM",
+      "role": "产品经理自检",
+      "sessionId": "e9f3e32685784c70bdc6fa987b0f967d",
+      "status": "running"
+    }
+  ]
+}

@@ -35,6 +35,7 @@ const previewFile = ref<GeneratedFile | null>(null);
 const previewContent = ref('');
 const previewLoading = ref(false);
 const previewError = ref('');
+const copiedFileId = ref('');
 const renderedProvider = computed(() =>
   props.provider ? `${props.provider.name} · ${props.provider.model}` : '未配置模型'
 );
@@ -162,6 +163,16 @@ function closeFilePreview() { previewFile.value = null; previewContent.value = '
 async function openFileInOs(f: GeneratedFile) {
   await api.openFileInOs(f.abs_path);
 }
+async function copyFileContent(f: GeneratedFile) {
+  // 抽屉已加载该文件就直接用，否则读一次
+  let text = f.abs_path === previewFile.value?.abs_path ? previewContent.value : '';
+  if (!text) {
+    try { text = await api.readFilePreview(f.abs_path); } catch { return; }
+  }
+  await copyText(text);
+  copiedFileId.value = f.abs_path;
+  setTimeout(() => { if (copiedFileId.value === f.abs_path) copiedFileId.value = ''; }, 1500);
+}
 function fileIcon(f: GeneratedFile) {
   const ext = f.path.split('.').pop()?.toLowerCase() ?? '';
   const map: Record<string, string> = {
@@ -274,6 +285,7 @@ async function onBubbleClick(e: MouseEvent) {
                   <span class="file-icon">{{ fileIcon(f) }}</span>
                   <span class="file-name">{{ fileName(f) }}</span>
                   <span class="file-path">{{ f.path }}</span>
+                  <button class="file-open-btn" :title="copiedFileId === f.abs_path ? '已复制' : '复制文件内容到剪贴板'" @click.stop="copyFileContent(f)">{{ copiedFileId === f.abs_path ? '✓' : '📋' }}</button>
                   <button class="file-open-btn" title="用系统应用打开" @click.stop="openFileInOs(f)">↗</button>
                 </div>
               </div>
@@ -291,6 +303,7 @@ async function onBubbleClick(e: MouseEvent) {
           <div class="file-preview-head">
             <span class="fp-icon">{{ fileIcon(previewFile) }}</span>
             <span class="fp-name">{{ previewFile.path }}</span>
+            <button class="fp-copy" :title="copiedFileId === previewFile.abs_path ? '已复制' : '复制文件内容到剪贴板'" @click="copyFileContent(previewFile)">{{ copiedFileId === previewFile.abs_path ? '✓ 已复制' : '📋 复制' }}</button>
             <button class="fp-close" @click="closeFilePreview">✕</button>
           </div>
           <div v-if="previewLoading" class="fp-body">加载中…</div>

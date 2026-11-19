@@ -12,6 +12,8 @@ const accents = Object.keys(ACCENTS) as Array<keyof typeof ACCENTS>;
 const store = useChatStore();
 const result = ref('');
 const testing = ref(false);
+const testProviderId = ref('');
+const testResults = ref<Record<string, { ok: boolean; text: string }>>({});
 const saved = ref(true);
 // 使用本地草稿，避免未点保存就改到内存配置导致前后端静默分叉
 const draft = ref<AppConfig | null>(null);
@@ -68,12 +70,20 @@ async function save() {
 
 async function test(p: Provider) {
   testing.value = true;
-  result.value = '测试中…';
+  testProviderId.value = p.id;
+  testResults.value[p.id] = { ok: false, text: '测试中…' };
   try {
-    result.value = await api.testProvider(p);
+    const ok = await api.testProvider(p);
+    testResults.value[p.id] = { ok: true, text: `✓ ${ok}` };
+    result.value = ok;
   } catch (e: any) {
-    result.value = `失败: ${typeof e === 'string' ? e : e?.message ?? e}`;
-  } finally { testing.value = false; }
+    const msg = typeof e === 'string' ? e : e?.message ?? String(e);
+    testResults.value[p.id] = { ok: false, text: `✗ ${msg}` };
+    result.value = `失败: ${msg}`;
+  } finally {
+    testing.value = false;
+    testProviderId.value = '';
+  }
 }
 
 async function pickWorkspace() {
@@ -117,7 +127,10 @@ function setThinking(v: string) {
             <input v-model="p.api_key" type="password" placeholder="sk-... / cpk-..." />
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <button class="btn btn-sm" :disabled="testing" @click="test(p)">测试连接</button>
+            <button class="btn btn-sm" :disabled="testing && testProviderId !== p.id" @click="test(p)">
+              {{ testing && testProviderId === p.id ? '测试中…' : '测试连接' }}
+            </button>
+            <span v-if="testResults[p.id]" class="test-result" :class="{ ok: testResults[p.id].ok }">{{ testResults[p.id].text }}</span>
             <a v-if="applyLink(p)" :href="applyLink(p) as string" target="_blank" class="apply-link" rel="noopener">没有 key？去申请 →</a>
           </div>
         </div>
