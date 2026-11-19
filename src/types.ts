@@ -112,10 +112,18 @@ export interface ToolCallView {
   status: 'running' | 'done' | 'error';
 }
 
+/** 本轮生成/修改的文件 */
+export interface GeneratedFile {
+  path: string;
+  abs_path: string;
+  kind: string;
+}
+
 export type StreamEvent =
   | { type: 'delta'; text: string }
   | { type: 'reasoning'; text: string }
   | { type: 'tool'; name: string; args: string }
+  | { type: 'file'; path: string; abs_path: string; kind: string }
   | { type: 'tool_result'; name: string; result: string }
   | { type: 'approval_required'; id: string; tool: string; summary: string }
   | { type: 'usage'; prompt_tokens: number; completion_tokens: number; estimated_cost: number }

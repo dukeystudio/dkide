@@ -55,6 +55,9 @@ export const api = {
   },
   cancelChat: (sessionId: string) => invoke<void>('cancel_chat', { sessionId }),
 
+  readFilePreview: (absPath: string) => invoke<string>('read_file_for_preview', { absPath }),
+  openFileInOs: (absPath: string) => invoke<void>('open_file_in_os', { absPath }),
+
   listApprovals: () => invoke<Approval[]>('list_approvals'),
   respondApproval: (id: string, approved: boolean) =>
     invoke<void>('respond_approval', { id, approved }),

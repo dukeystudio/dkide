@@ -52,6 +52,8 @@ pub fn run() {
             commands::export_session,
             commands::chat,
             commands::cancel_chat,
+            commands::read_file_for_preview,
+            commands::open_file_in_os,
             commands::list_approvals,
             commands::respond_approval,
             commands::get_total_usage,

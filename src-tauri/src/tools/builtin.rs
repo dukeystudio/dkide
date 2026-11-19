@@ -150,6 +150,18 @@ pub fn exec_tool(ctx: &ToolContext, name: &str, args: &str) -> Result<String> {
             std::fs::write(&full, content)
                 .map_err(|e| AppError(format!("写入文件失败: {}", e)))?;
             logger::tool("write_file", format!("written: {}", full.display()));
+            // 通知前端"生成文件"面板：给出相对路径与绝对路径
+            let rel = full.strip_prefix(&ctx.workspace)
+                .unwrap_or(&full)
+                .to_string_lossy()
+                .to_string();
+            if let Some(ref channel) = ctx.channel {
+                let _ = channel.send(StreamEvent::File {
+                    path: rel,
+                    abs_path: full.to_string_lossy().to_string(),
+                    kind: "write_file".into(),
+                });
+            }
             Ok(format!("已写入: {}", full.display()))
         }
         "list_files" => {

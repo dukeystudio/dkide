@@ -279,6 +279,47 @@ pub fn cancel_chat(state: State<'_, AppState>, session_id: String) -> Result<()>
     Ok(())
 }
 
+/// 读取工作目录内文件用于前端预览（限制在工作目录内，避免越界）
+#[tauri::command]
+pub fn read_file_for_preview(state: State<'_, AppState>, abs_path: String) -> Result<String> {
+    let workspace = {
+        let config = state.config.lock().unwrap();
+        if config.workspace_path.trim().is_empty() {
+            state.store.dir.clone()
+        } else {
+            PathBuf::from(&config.workspace_path)
+        }
+    };
+    let p = PathBuf::from(&abs_path);
+    if !p.starts_with(&workspace) {
+        return Err(AppError("路径越界：不在工作目录内".into()));
+    }
+    let content = std::fs::read_to_string(&p).map_err(|e| AppError(format!("读取失败: {}", e)))?;
+    // 截断超大文件，避免前端卡顿
+    Ok(if content.chars().count() > 100_000 {
+        let cut = content.char_indices().nth(100_000).map(|(i, _)| i).unwrap_or(content.len());
+        format!("{}\n\n…（内容过长已截断，共 {} 字符）", &content[..cut], content.chars().count())
+    } else {
+        content
+    })
+}
+
+/// 用系统默认应用打开文件
+#[tauri::command]
+pub fn open_file_in_os(abs_path: String) -> Result<()> {
+    let p = PathBuf::from(&abs_path);
+    if !p.exists() {
+        return Err(AppError("文件不存在".into()));
+    }
+    #[cfg(target_os = "macos")]
+    std::process::Command::new("open").arg(&p).spawn()?;
+    #[cfg(target_os = "windows")]
+    std::process::Command::new("explorer").arg(&p).spawn()?;
+    #[cfg(target_os = "linux")]
+    std::process::Command::new("xdg-open").arg(&p).spawn()?;
+    Ok(())
+}
+
 // ---------- 审批 ----------
 
 #[tauri::command]

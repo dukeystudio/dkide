@@ -5,7 +5,7 @@ import { useSkillsStore } from '../skillsStore';
 import { api } from '../api';
 import ThemeMenu from './ThemeMenu.vue';
 import { renderMarkdown, copyText } from '../markdown';
-import type { Provider, Message, ToolCallView } from '../types';
+import type { Provider, Message, ToolCallView, GeneratedFile } from '../types';
 
 const props = defineProps<{ provider: Provider | null }>();
 const emit = defineEmits<{ openSettings: []; openSkills: [] }>();
@@ -25,9 +25,16 @@ const streaming = computed(() => session.value ? store.isStreaming(session.value
 const streamText = computed(() => session.value ? store.textFor(session.value.id) : '');
 const streamReasoning = computed(() => session.value ? store.reasoningFor(session.value.id) : '');
 const streamTools = computed(() => session.value ? store.toolsFor(session.value.id) : []);
+const streamFiles = computed(() => session.value ? store.filesFor(session.value.id) : []);
 const streamUsage = computed(() => session.value ? store.usageFor(session.value.id) : null);
 // 思考过程：生成中默认展开，生成完折叠（可手动点开）
 const reasoningOpen = ref(true);
+const filesOpen = ref(true);
+// 文件预览
+const previewFile = ref<GeneratedFile | null>(null);
+const previewContent = ref('');
+const previewLoading = ref(false);
+const previewError = ref('');
 const renderedProvider = computed(() =>
   props.provider ? `${props.provider.name} · ${props.provider.model}` : '未配置模型'
 );
@@ -121,6 +128,41 @@ async function saveEdit(m: Message) {
   editingId.value = null;
 }
 
+async function openFilePreview(f: GeneratedFile) {
+  previewFile.value = f;
+  previewContent.value = '';
+  previewLoading.value = true;
+  previewError.value = '';
+  try {
+    previewContent.value = await api.readFilePreview(f.abs_path);
+  } catch (e: any) {
+    previewError.value = typeof e === 'string' ? e : e?.message ?? String(e);
+  } finally {
+    previewLoading.value = false;
+  }
+}
+function closeFilePreview() { previewFile.value = null; previewContent.value = ''; }
+async function openFileInOs(f: GeneratedFile) {
+  await api.openFileInOs(f.abs_path);
+}
+function fileIcon(f: GeneratedFile) {
+  const ext = f.path.split('.').pop()?.toLowerCase() ?? '';
+  const map: Record<string, string> = {
+    ts: '🟦', tsx: '🟦', js: '🟨', jsx: '🟨', json: '🟨',
+    md: '📝', mdx: '📝', txt: '📝',
+    rs: '🦀', py: '🐍', go: '🐹', java: '☕', c: '⚙️', cpp: '⚙️', h: '⚙️',
+    html: '🌐', htm: '🌐', css: '🎨', scss: '🎨', less: '🎨',
+    svg: '🖼', png: '🖼', jpg: '🖼', jpeg: '🖼', gif: '🖼',
+    sh: '⌨️', zsh: '⌨️', bat: '⌨️', ps1: '⌨️',
+    yml: '📋', yaml: '📋', toml: '📋', ini: '📋',
+    sql: '🗄', dockerfile: '🐳',
+  };
+  return map[ext] ?? '📄';
+}
+function fileName(f: GeneratedFile) {
+  return f.path.split('/').pop() || f.path;
+}
+
 async function onBubbleClick(e: MouseEvent) {
   const target = e.target as HTMLElement;
   if (target.classList.contains('copy-code')) {
@@ -202,10 +244,39 @@ async function onBubbleClick(e: MouseEvent) {
               </div>
             </div>
             <div class="bubble typing" v-html="md(streamText)"></div>
+            <div v-if="streamFiles.length" class="files-panel" :class="{ open: filesOpen }">
+              <div class="files-head" @click="filesOpen = !filesOpen">
+                <span>📁 生成文件</span>
+                <span class="files-count">{{ streamFiles.length }}</span>
+                <span class="files-toggle">{{ filesOpen ? '收起' : '展开' }}</span>
+              </div>
+              <div v-if="filesOpen" class="files-list">
+                <div v-for="f in streamFiles" :key="f.abs_path" class="file-row" @click="openFilePreview(f)">
+                  <span class="file-icon">{{ fileIcon(f) }}</span>
+                  <span class="file-name">{{ fileName(f) }}</span>
+                  <span class="file-path">{{ f.path }}</span>
+                  <button class="file-open-btn" title="用系统应用打开" @click.stop="openFileInOs(f)">↗</button>
+                </div>
+              </div>
+            </div>
             <div v-if="streamUsage && streamUsage.total_tokens" class="usage-bar">
               {{ streamUsage.total_tokens }} tokens · ${{ streamUsage.estimated_cost.toFixed(4) }}
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- 文件预览抽屉（点击文件行时弹出） -->
+      <div v-if="previewFile" class="file-preview-mask" @click.self="closeFilePreview">
+        <div class="file-preview">
+          <div class="file-preview-head">
+            <span class="fp-icon">{{ fileIcon(previewFile) }}</span>
+            <span class="fp-name">{{ previewFile.path }}</span>
+            <button class="fp-close" @click="closeFilePreview">✕</button>
+          </div>
+          <div v-if="previewLoading" class="fp-body">加载中…</div>
+          <div v-else-if="previewError" class="fp-body fp-error">{{ previewError }}</div>
+          <pre v-else class="fp-body fp-code">{{ previewContent }}</pre>
         </div>
       </div>
     </div>
@@ -268,6 +339,12 @@ async function onBubbleClick(e: MouseEvent) {
               </div>
             </div>
             <div class="composer-actions">
+              <button
+                v-if="!streaming && session?.messages.some((m) => m.role === 'user')"
+                class="undo-btn"
+                title="撤销最近一轮（删除上一条提问及其回答）"
+                @click="store.undo()"
+              >↩ 撤销</button>
               <button v-if="streaming" class="stop-btn" @click="store.cancel(store.currentId!)">停止生成</button>
               <button v-else class="send-btn" :disabled="!input.trim()" @click="send">发送</button>
             </div>

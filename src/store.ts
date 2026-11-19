@@ -3,7 +3,7 @@ import { ref, computed } from 'vue';
 import { api } from './api';
 import { useSkillsStore } from './skillsStore';
 import { useAuthStore } from './authStore';
-import type { AppConfig, Approval, Message, Session, StreamEvent, ToolCallView, UsageStats } from './types';
+import type { AppConfig, Approval, GeneratedFile, Message, Session, StreamEvent, ToolCallView, UsageStats } from './types';
 
 export const useChatStore = defineStore('chat', () => {
   const sessions = ref<Session[]>([]);
@@ -18,6 +18,7 @@ export const useChatStore = defineStore('chat', () => {
   const streamText = ref<Record<string, string>>({});
   const streamReasoning = ref<Record<string, string>>({});
   const streamTools = ref<Record<string, ToolCallView[]>>({});
+  const streamFiles = ref<Record<string, GeneratedFile[]>>({});
   const streamUsage = ref<Record<string, UsageStats>>({});
 
   const pendingApprovals = ref<Approval[]>([]);
@@ -41,6 +42,7 @@ export const useChatStore = defineStore('chat', () => {
   function textFor(id: string) { return streamText.value[id] ?? ''; }
   function reasoningFor(id: string) { return streamReasoning.value[id] ?? ''; }
   function toolsFor(id: string) { return streamTools.value[id] ?? []; }
+  function filesFor(id: string) { return streamFiles.value[id] ?? []; }
   function usageFor(id: string) { return streamUsage.value[id] ?? null; }
 
   async function init() {
@@ -150,6 +152,7 @@ export const useChatStore = defineStore('chat', () => {
     streamText.value[sid] = '';
     streamReasoning.value[sid] = '';
     streamTools.value[sid] = [];
+    streamFiles.value[sid] = [];
     streamUsage.value[sid] = {
       prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, requests: 0, estimated_cost: 0,
     };
@@ -180,6 +183,13 @@ export const useChatStore = defineStore('chat', () => {
             }
             break;
           }
+          case 'file':
+            // 去重：同一文件多次写入只保留最新一次
+            streamFiles.value[sid] = [
+              ...(streamFiles.value[sid] || []).filter((f) => f.abs_path !== event.abs_path),
+              { path: event.path, abs_path: event.abs_path, kind: event.kind },
+            ];
+            break;
           case 'approval_required':
             pendingApprovals.value = [
               ...pendingApprovals.value,
@@ -225,12 +235,33 @@ export const useChatStore = defineStore('chat', () => {
       delete streamReasoning.value[sid];
       delete streamTools.value[sid];
       delete streamUsage.value[sid];
+      // streamFiles 保留，供"生成文件"面板在生成结束后继续展示；下次 send 开头会清空
     }
     return true;
   }
 
   async function cancel(sid: string) {
     await api.cancelChat(sid);
+  }
+
+  /** 撤销最近一轮：删除最后一条用户消息及其后的所有消息（含助手回复与工具结果） */
+  async function undo(): Promise<boolean> {
+    const session = currentSession.value;
+    if (!session || isStreaming(session.id)) return false;
+    // 定位最后一条 user 消息
+    let userIdx = -1;
+    for (let i = session.messages.length - 1; i >= 0; i--) {
+      if (session.messages[i].role === 'user') { userIdx = i; break; }
+    }
+    if (userIdx < 0) return false;
+    // 删除该 user 消息及之后的所有消息
+    const toRemove = session.messages.slice(userIdx);
+    for (const m of toRemove) {
+      await api.deleteMessage(session.id, m.id);
+    }
+    session.messages = session.messages.slice(0, userIdx);
+    sessions.value = await api.listSessions();
+    return true;
   }
 
   async function regenerate(messageIndex: number) {
@@ -271,9 +302,9 @@ export const useChatStore = defineStore('chat', () => {
   return {
     sessions, currentId, currentSession, filteredSessions, config, error, searchQuery, providerRequired,
     streamingIds, totalUsage, pendingApprovals,
-    isStreaming, textFor, reasoningFor, toolsFor, usageFor,
+    isStreaming, textFor, reasoningFor, toolsFor, filesFor, usageFor,
     init, newSession, selectSession, deleteSession, renameSession, togglePin,
-    deleteMessage, refreshUsage, send, cancel, regenerate, editMessage, saveConfig,
+    deleteMessage, refreshUsage, send, cancel, regenerate, undo, editMessage, saveConfig,
     respondApproval,
   };
 });
