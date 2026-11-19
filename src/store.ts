@@ -16,6 +16,8 @@ export const useChatStore = defineStore('chat', () => {
   const providerDialogOpen = ref(false);
   /** 打开弹窗时是否自动聚焦/滚动到"添加服务商"区 */
   const focusAddProvider = ref(false);
+  /** 打开弹窗时需要编辑的服务商 id */
+  const providerDialogFocusId = ref<string | null>(null);
 
   // 按会话隔离的流式状态
   const streamingIds = ref<Set<string>>(new Set());
@@ -24,6 +26,7 @@ export const useChatStore = defineStore('chat', () => {
   const streamTools = ref<Record<string, ToolCallView[]>>({});
   const streamFiles = ref<Record<string, GeneratedFile[]>>({});
   const streamUsage = ref<Record<string, UsageStats>>({});
+  const streamStartedAt = ref<Record<string, number>>({});
 
   const pendingApprovals = ref<Approval[]>([]);
   let approvalTimer: number | null = null;
@@ -48,6 +51,7 @@ export const useChatStore = defineStore('chat', () => {
   function toolsFor(id: string) { return streamTools.value[id] ?? []; }
   function filesFor(id: string) { return streamFiles.value[id] ?? []; }
   function usageFor(id: string) { return streamUsage.value[id] ?? null; }
+  function startTimeFor(id: string) { return streamStartedAt.value[id] ?? 0; }
 
   async function init() {
     config.value = await api.getConfig();
@@ -131,7 +135,7 @@ export const useChatStore = defineStore('chat', () => {
     return false;
   }
 
-  async function send(content: string): Promise<boolean> {
+  async function send(content: string, onAccepted?: () => void, skillNames: string[] | null = null): Promise<boolean> {
     const session = currentSession.value;
     if (!session || isStreaming(session.id) || !content.trim()) return false;
 
@@ -147,6 +151,7 @@ export const useChatStore = defineStore('chat', () => {
     };
     session.messages.push(userMsg);
     await api.appendMessage(session.id, userMsg);
+    onAccepted?.();
     if (session.title === '新会话') {
       await renameSession(session.id, content.trim().slice(0, 20));
     }
@@ -157,6 +162,7 @@ export const useChatStore = defineStore('chat', () => {
     streamReasoning.value[sid] = '';
     streamTools.value[sid] = [];
     streamFiles.value[sid] = [];
+    streamStartedAt.value[sid] = Date.now();
     streamUsage.value[sid] = {
       prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, requests: 0, estimated_cost: 0,
     };
@@ -174,7 +180,7 @@ export const useChatStore = defineStore('chat', () => {
           case 'tool':
             streamTools.value[sid] = [
               ...(streamTools.value[sid] || []),
-              { name: event.name, args: event.args, status: 'running' },
+              { name: event.name, args: event.args, status: 'running', started_at: Date.now() },
             ];
             break;
           case 'tool_result': {
@@ -182,7 +188,7 @@ export const useChatStore = defineStore('chat', () => {
             const idx = [...tools].reverse().findIndex((t) => t.name === event.name && t.status === 'running');
             if (idx >= 0) {
               const real = tools.length - 1 - idx;
-              tools[real] = { ...tools[real], result: event.result, status: 'done' };
+              tools[real] = { ...tools[real], result: event.result, status: 'done', finished_at: Date.now() };
               streamTools.value[sid] = [...tools];
             }
             break;
@@ -225,7 +231,7 @@ export const useChatStore = defineStore('chat', () => {
             });
             break;
         }
-      });
+      }, skillNames);
       sessions.value = await api.listSessions();
       await refreshUsage();
     } catch (e: any) {
@@ -334,9 +340,9 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   return {
-    sessions, currentId, currentSession, filteredSessions, config, error, searchQuery, providerRequired, providerDialogOpen, focusAddProvider,
+    sessions, currentId, currentSession, filteredSessions, config, error, searchQuery, providerRequired, providerDialogOpen, focusAddProvider, providerDialogFocusId,
     streamingIds, totalUsage, pendingApprovals,
-    isStreaming, textFor, reasoningFor, toolsFor, filesFor, usageFor,
+    isStreaming, textFor, reasoningFor, toolsFor, filesFor, usageFor, startTimeFor,
     init, newSession, selectSession, deleteSession, renameSession, togglePin,
     deleteMessage, refreshUsage, send, cancel, regenerate, undo, editMessage, saveConfig,
     respondApproval,

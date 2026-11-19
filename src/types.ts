@@ -4,6 +4,18 @@ export interface Provider {
   base_url: string;
   api_key: string;
   model: string;
+  /** 思考强度：null 使用服务商默认值，例如 low / medium / high / xhigh */
+  reasoning_effort: string | null;
+  /** 是否声明支持工具调用 */
+  tool_calling: boolean;
+  /** 是否声明支持图片输入 */
+  image_input: boolean;
+  /** 是否声明支持推理/思考 */
+  reasoning: boolean;
+  /** 输入上下文 token 数：null 使用服务商默认值 */
+  input_tokens: number | null;
+  /** 输出 token 数：null 使用服务商默认值 */
+  output_tokens: number | null;
 }
 
 export interface AppConfig {
@@ -112,6 +124,26 @@ export interface ToolCallView {
   args: string;
   result?: string;
   status: 'running' | 'done' | 'error';
+  started_at: number;
+  finished_at?: number;
+}
+
+export const TEXT_ATTACHMENT_EXTENSIONS = [
+  'txt', 'text', 'md', 'markdown', 'csv', 'tsv', 'json', 'jsonl', 'xml',
+  'yaml', 'yml', 'toml', 'ini', 'cfg', 'conf', 'properties', 'env', 'log',
+  'sql', 'html', 'htm', 'css', 'scss', 'js', 'jsx', 'ts', 'tsx', 'vue',
+  'py', 'rb', 'go', 'rs', 'java', 'c', 'h', 'cpp', 'hpp', 'cs', 'php',
+  'sh', 'bash', 'zsh', 'ps1', 'bat', 'cmd', 'lua', 'swift', 'kt', 'scala', 'r',
+] as const;
+
+export const TEXT_ATTACHMENT_FILENAMES = [
+  '.env', 'dockerfile', 'makefile', 'readme', 'license', 'gitignore',
+] as const;
+
+export interface TextAttachment {
+  name: string;
+  content: string;
+  truncated: boolean;
 }
 
 /** 本轮生成/修改的文件 */

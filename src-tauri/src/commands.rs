@@ -8,11 +8,23 @@ use crate::approval::PendingApproval;
 use crate::error::{AppError, Result};
 use crate::llm::{ChatEngine, StreamEvent};
 use crate::logger;
-use crate::models::{AppConfig, Message, Provider, Session};
+use crate::models::{AppConfig, Message, Provider, Session, TextAttachment};
 use crate::skill::Skill;
 use crate::state::AppState;
 use crate::tools::{ToolContext, ToolPolicy};
 use crate::usage::UsageStats;
+
+const MAX_TEXT_ATTACHMENT_BYTES: u64 = 5 * 1024 * 1024;
+const TEXT_ATTACHMENT_EXTENSIONS: &[&str] = &[
+    "txt", "text", "md", "markdown", "csv", "tsv", "json", "jsonl", "xml",
+    "yaml", "yml", "toml", "ini", "cfg", "conf", "properties", "env", "log",
+    "sql", "html", "htm", "css", "scss", "js", "jsx", "ts", "tsx", "vue",
+    "py", "rb", "go", "rs", "java", "c", "h", "cpp", "hpp", "cs", "php",
+    "sh", "bash", "zsh", "ps1", "bat", "cmd", "lua", "swift", "kt", "scala", "r",
+];
+const TEXT_ATTACHMENT_FILENAMES: &[&str] = &[
+    ".env", "dockerfile", "makefile", "readme", "license", "gitignore",
+];
 
 fn active_provider(state: &AppState) -> Result<Provider> {
     let config = state.config.lock().unwrap();
@@ -74,17 +86,24 @@ pub async fn test_provider(provider: Provider, http: State<'_, reqwest::Client>)
     }
 
     let url = format!("{}/chat/completions", provider.base_url.trim_end_matches('/'));
+    let mut body = serde_json::json!({
+        "model": provider.model,
+        "messages": [{"role": "user", "content": "说OK"}],
+        "stream": false,
+        "max_tokens": 16,
+    });
+    if let Some(effort) = provider.reasoning_effort.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+        body["reasoning_effort"] = serde_json::json!(effort);
+    }
+    if let Some(tokens) = provider.output_tokens {
+        body["max_tokens"] = serde_json::json!(tokens);
+    }
     // 测试连接是轻量 ping，30s 足够；避免继承全局 300s 导致按钮长时间挂死无反馈
     let resp = http.post(&url)
         .timeout(std::time::Duration::from_secs(30))
         .header("Authorization", format!("Bearer {}", provider.api_key))
         .header("Content-Type", "application/json")
-        .json(&serde_json::json!({
-            "model": provider.model,
-            "messages": [{"role": "user", "content": "说OK"}],
-            "stream": false,
-            "max_tokens": 16,
-        }))
+        .json(&body)
         .send()
         .await
         .map_err(|e| AppError(friendly_req_error(&e)))?;
@@ -243,6 +262,7 @@ pub async fn chat(
     state: State<'_, AppState>,
     session_id: String,
     channel: Channel<StreamEvent>,
+    skill_names: Option<Vec<String>>,
 ) -> Result<String> {
     let provider = active_provider(&state)?;
     state.cancels.clear(&session_id);
@@ -258,6 +278,22 @@ pub async fn chat(
          config.enable_thinking, config.temperature, config.max_tokens)
     };
 
+    let effective_token_budget = provider.input_tokens
+        .filter(|value| *value > 0)
+        .map(|value| value as usize)
+        .unwrap_or(token_budget);
+    let has_reasoning_effort = provider.reasoning_effort.as_ref()
+        .map_or(false, |value| !value.trim().is_empty());
+    let effective_enable_thinking = if !provider.reasoning {
+        Some(false)
+    } else if has_reasoning_effort {
+        Some(true)
+    } else {
+        enable_thinking
+    };
+    let effective_max_tokens = provider.output_tokens.filter(|value| *value > 0).or(max_tokens);
+    let effective_skills = skill_names.unwrap_or(enabled_skills);
+
     let workspace = if workspace_path.trim().is_empty() {
         app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."))
     } else {
@@ -267,7 +303,7 @@ pub async fn chat(
 
     let (skill_summaries, skill_instructions) = {
         let mgr = state.skill_manager.lock().unwrap();
-        let skills: Vec<_> = mgr.list(&enabled_skills)?.into_iter().filter(|s| s.enabled).collect();
+        let skills: Vec<_> = mgr.list(&effective_skills)?.into_iter().filter(|s| s.enabled).collect();
         let summaries: Vec<(String, String)> = skills.iter()
             .map(|s| (s.meta.name.clone(), s.meta.description.clone())).collect();
         let mut instructions = std::collections::HashMap::new();
@@ -288,11 +324,27 @@ pub async fn chat(
 
     let engine = ChatEngine::new(
         &provider, &system_prompt, &skill_summaries, &skill_instructions,
-        &tool_ctx, &state.cancels, &session_id, &state.http, token_budget, custom_price,
-        enable_thinking, temperature, max_tokens,
+        &tool_ctx, &state.cancels, &session_id, &state.http, effective_token_budget, custom_price,
+        effective_enable_thinking, temperature, effective_max_tokens,
     );
 
-    let (answer, reasoning, usage) = engine.run(&history, &channel).await?;
+    let (answer, reasoning, usage) = tokio::select! {
+        result = engine.run(&history, &channel) => {
+            match result {
+                Ok(value) => value,
+                Err(error) => {
+                    let _ = channel.send(StreamEvent::Error { message: error.0 });
+                    state.cancels.clear(&session_id);
+                    return Ok(String::new());
+                }
+            }
+        }
+        _ = state.cancels.wait_cancelled(&session_id) => {
+            let _ = channel.send(StreamEvent::Cancelled);
+            state.cancels.clear(&session_id);
+            return Ok(String::new());
+        }
+    };
     state.cancels.clear(&session_id);
 
     let mut sessions = state.sessions.lock().unwrap();
@@ -338,6 +390,34 @@ pub fn read_file_for_preview(state: State<'_, AppState>, abs_path: String) -> Re
     } else {
         content
     })
+}
+
+/// 读取用户选择的 TXT 附件；路径由系统文件选择框给出，不受工作目录限制。
+#[tauri::command]
+pub fn read_text_attachment(abs_path: String) -> Result<TextAttachment> {
+    let path = PathBuf::from(&abs_path);
+    let file_name = path.file_name().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
+    let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
+    let is_supported = TEXT_ATTACHMENT_EXTENSIONS.contains(&extension.as_str())
+        || TEXT_ATTACHMENT_FILENAMES.contains(&file_name.as_str());
+    if !is_supported {
+        return Err(AppError("仅支持常见文本、代码与配置文件".into()));
+    }
+    let metadata = std::fs::metadata(&path).map_err(|e| AppError(format!("无法读取文件: {}", e)))?;
+    if metadata.len() > MAX_TEXT_ATTACHMENT_BYTES {
+        return Err(AppError("文本文件不能超过 5MB".into()));
+    }
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| AppError(format!("文件不是 UTF-8 文本或读取失败: {}", e)))?;
+    let total_chars = content.chars().count();
+    let (content, truncated) = if total_chars > 200_000 {
+        let cut = content.char_indices().nth(200_000).map(|(i, _)| i).unwrap_or(content.len());
+        (content[..cut].to_string(), true)
+    } else {
+        (content, false)
+    };
+    let name = path.file_name().and_then(|value| value.to_str()).unwrap_or("attachment.txt").to_string();
+    Ok(TextAttachment { name, content, truncated })
 }
 
 /// 用系统默认应用打开文件

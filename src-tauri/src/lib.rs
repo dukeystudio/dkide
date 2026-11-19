@@ -53,6 +53,7 @@ pub fn run() {
             commands::chat,
             commands::cancel_chat,
             commands::read_file_for_preview,
+            commands::read_text_attachment,
             commands::open_file_in_os,
             commands::list_approvals,
             commands::respond_approval,

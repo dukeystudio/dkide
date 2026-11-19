@@ -31,7 +31,22 @@ impl From<std::io::Error> for AppError {
 
 impl From<reqwest::Error> for AppError {
     fn from(e: reqwest::Error) -> Self {
-        AppError(e.to_string())
+        AppError(friendly_request_error(&e))
+    }
+}
+
+/// 把 reqwest 底层错误转成用户可读提示，避免直接暴露英文 URL 报错。
+pub fn friendly_request_error(error: &reqwest::Error) -> String {
+    if error.is_timeout() {
+        "请求超时：网络响应过慢或服务商暂时不可用，请稍后重试".into()
+    } else if error.is_connect() {
+        "无法连接服务商：请检查网络、代理或 Base URL".into()
+    } else if error.is_body() {
+        "读取响应失败：服务商提前断开连接，请重试".into()
+    } else if error.is_request() {
+        format!("请求发送失败：{}", error)
+    } else {
+        format!("网络请求失败：{}", error)
     }
 }
 

@@ -1,5 +1,6 @@
 import { invoke, Channel } from '@tauri-apps/api/core';
-import { save } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
+import { TEXT_ATTACHMENT_EXTENSIONS, TEXT_ATTACHMENT_FILENAMES } from './types';
 import type {
   AppConfig,
   Approval,
@@ -10,6 +11,7 @@ import type {
   Session,
   Skill,
   StreamEvent,
+  TextAttachment,
   UsageStats,
   UserQuota,
 } from './types';
@@ -48,14 +50,25 @@ export const api = {
     return !!path;
   },
 
-  chat: (sessionId: string, onEvent: (e: StreamEvent) => void): Promise<string> => {
+  chat: (sessionId: string, onEvent: (e: StreamEvent) => void, skillNames: string[] | null = null): Promise<string> => {
     const channel = new Channel<StreamEvent>();
     channel.onmessage = onEvent;
-    return invoke<string>('chat', { sessionId, channel });
+    return invoke<string>('chat', { sessionId, channel, skillNames });
   },
   cancelChat: (sessionId: string) => invoke<void>('cancel_chat', { sessionId }),
 
   readFilePreview: (absPath: string) => invoke<string>('read_file_for_preview', { absPath }),
+  pickTextAttachment: async () => {
+    const selected = await open({
+      multiple: false,
+      filters: [{
+        name: '文本与代码文件',
+        extensions: [...TEXT_ATTACHMENT_EXTENSIONS, ...TEXT_ATTACHMENT_FILENAMES],
+      }],
+    });
+    return typeof selected === 'string' ? selected : null;
+  },
+  readTextAttachment: (absPath: string) => invoke<TextAttachment>('read_text_attachment', { absPath }),
   openFileInOs: (absPath: string) => invoke<void>('open_file_in_os', { absPath }),
 
   listApprovals: () => invoke<Approval[]>('list_approvals'),

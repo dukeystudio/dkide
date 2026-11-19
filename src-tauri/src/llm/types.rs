@@ -33,9 +33,12 @@ pub struct ChatRequest {
     pub stream: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
-    /// 思考开关/强度（可选）。None 用模型默认；false 关闭；"low"/"xhigh" 等档位
+    /// 思考开关（可选）。None 用模型默认；false 关闭；true 开启
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enable_thinking: Option<bool>,
+    /// 思考强度（可选）。例如 low / medium / high / xhigh
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     /// 温度（可选）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,

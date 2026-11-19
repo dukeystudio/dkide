@@ -62,7 +62,7 @@ impl<'a> ChatEngine<'a> {
         channel: &Channel<StreamEvent>,
     ) -> Result<(String, String, UsageStats)> {
         let messages = self.build_messages(history);
-        let tools = self.build_tools();
+        let tools = if self.provider.tool_calling { self.build_tools() } else { Vec::new() };
         let price = if self.custom_price > 0.0 { self.custom_price } else { model_price(&self.provider.model) };
         let mut total_usage = UsageStats::default();
         let mut all_reasoning = String::new();
@@ -207,6 +207,10 @@ impl<'a> ChatEngine<'a> {
             stream: true,
             tools: tools.to_vec(),
             enable_thinking: self.enable_thinking,
+            reasoning_effort: self.provider.reasoning_effort.as_ref().and_then(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+            }),
             temperature: self.temperature,
             max_tokens: self.max_tokens,
         };
@@ -278,10 +282,20 @@ impl<'a> ChatEngine<'a> {
 
     fn system_prompt(&self) -> String {
         let mut prompt = self.system_prompt.to_string();
-        prompt.push_str(&format!(
-            "\n\n## 工作环境\n文件工具的工作目录为: {}\n你可以使用 read_file / write_file / list_files / run_command 工具。危险操作会请求用户批准。\n\n## 机检（静态检查）约定\n做代码检查/静态分析只走 Rust 工具链：cargo clippy（lint）、cargo check（编译检查）、cargo test（测试）。禁止使用 Python（python/python3）执行机检或任何脚本任务；通用命令优先用 grep/ripgrep/awk 或系统原生工具。\n",
-            self.tool_ctx.workspace.display()
-        ));
+        if self.provider.tool_calling {
+            prompt.push_str(&format!(
+                "\n\n## 工作环境\n文件工具的工作目录为: {}\n你可以使用 read_file / write_file / list_files / run_command 工具。危险操作会请求用户批准。\n\n## 机检（静态检查）约定\n做代码检查/静态分析只走 Rust 工具链：cargo clippy（lint）、cargo check（编译检查）、cargo test（测试）。禁止使用 Python（python/python3）执行机检或任何脚本任务；通用命令优先用 grep/ripgrep/awk 或系统原生工具。\n",
+                self.tool_ctx.workspace.display()
+            ));
+        } else {
+            prompt.push_str("\n\n## 工具能力\n当前服务商已关闭工具调用，你只能基于对话内已有信息回答。\n");
+        }
+        let image_capability = if self.provider.image_input {
+            "该服务商已声明支持图片输入"
+        } else {
+            "该服务商未声明支持图片输入，请勿假设你能看到图片"
+        };
+        prompt.push_str(&format!("\n\n## 图片输入\n{}\n", image_capability));
         if !self.skills.is_empty() {
             prompt.push_str("\n\n## 可用技能\n");
             prompt.push_str("当任务匹配某个技能时，调用 activate_skill 工具加载其完整指令并遵循执行。\n");

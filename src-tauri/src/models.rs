@@ -25,6 +25,24 @@ pub struct Provider {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
+    /// 思考强度：留空使用服务商默认值，例如 low / medium / high / xhigh
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+    /// 是否声明该模型支持工具调用
+    #[serde(default = "default_capability_enabled")]
+    pub tool_calling: bool,
+    /// 是否声明该模型支持图片输入
+    #[serde(default = "default_capability_enabled")]
+    pub image_input: bool,
+    /// 是否声明该模型支持推理/思考
+    #[serde(default = "default_capability_enabled")]
+    pub reasoning: bool,
+    /// 输入上下文 token 数：None 使用服务商默认值
+    #[serde(default)]
+    pub input_tokens: Option<u32>,
+    /// 输出 token 数：None 使用服务商默认值
+    #[serde(default)]
+    pub output_tokens: Option<u32>,
 }
 
 /// 内置 Agnes（国内版）预设：常用 base_url 与模型，用户需自行申请 key 填入。
@@ -36,10 +54,16 @@ impl Default for Provider {
     fn default() -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            name: "新中转站".into(),
+            name: "Custom".into(),
             base_url: "https://api.openai.com/v1".into(),
             api_key: String::new(),
             model: "gpt-4o-mini".into(),
+            reasoning_effort: None,
+            tool_calling: true,
+            image_input: true,
+            reasoning: true,
+            input_tokens: None,
+            output_tokens: None,
         }
     }
 }
@@ -52,6 +76,12 @@ pub fn builtin_provider() -> Provider {
         base_url: BUILTIN_AGNES_BASE_URL.into(),
         api_key: String::new(),
         model: BUILTIN_AGNES_MODEL.into(),
+        reasoning_effort: None,
+        tool_calling: true,
+        image_input: true,
+        reasoning: true,
+        input_tokens: None,
+        output_tokens: None,
     }
 }
 
@@ -102,6 +132,7 @@ pub struct AppConfig {
 fn default_version() -> u32 { crate::config::CONFIG_VERSION }
 fn default_token_budget() -> usize { 24000 }
 fn default_show_reasoning() -> bool { true }
+fn default_capability_enabled() -> bool { true }
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -124,6 +155,13 @@ impl Default for AppConfig {
             show_reasoning: true,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TextAttachment {
+    pub name: String,
+    pub content: String,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

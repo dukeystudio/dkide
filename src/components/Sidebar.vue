@@ -5,7 +5,7 @@ import { useAuthStore } from '../authStore';
 
 const props = defineProps<{ page: string; collapsed: boolean }>();
 const emit = defineEmits<{
-  navigate: [page: 'chat' | 'settings' | 'skills' | 'about'];
+  navigate: [page: 'chat' | 'settings' | 'advanced' | 'skills' | 'about'];
   toggleCollapse: [];
 }>();
 const store = useChatStore();
@@ -96,6 +96,9 @@ async function doLogout() {
       </button>
       <button class="nav-btn" :class="{ active: page === 'settings' }" @click="emit('navigate', 'settings')" title="模型设置">
         <span class="nav-icon">⚙️</span><span class="nav-label">模型设置</span>
+      </button>
+      <button class="nav-btn" :class="{ active: page === 'advanced' }" @click="emit('navigate', 'advanced')" title="高级设置">
+        <span class="nav-icon">🔧</span><span class="nav-label">高级设置</span>
       </button>
       <button class="nav-btn" :class="{ active: page === 'about' }" @click="emit('navigate', 'about')" title="关于">
         <span class="nav-icon">ℹ️</span><span class="nav-label">关于</span>

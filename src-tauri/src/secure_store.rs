@@ -55,30 +55,11 @@ impl SecureStore {
     }
 
     pub fn set(&self, id: &str, key: &str) -> Result<()> {
-        if key.is_empty() {
-            self.remove(id)?;
-            return Ok(());
-        }
-        match keyring::Entry::new(SERVICE, id) {
-            Ok(entry) => {
-                if entry.set_password(key).is_ok() {
-                    self.remove_from_fallback(id).ok();
-                    return Ok(());
-                }
-                logger::warn(format!("系统钥匙串写入失败，使用本地加密回退: {}", id));
-            }
-            Err(e) => logger::warn(format!("钥匙串不可用: {}", e)),
-        }
-        let mut map = self.read_fallback().unwrap_or_default();
-        map.insert(id.to_string(), key.to_string());
-        self.write_fallback(&map)
+        self.set_named(SERVICE, id, key)
     }
 
     pub fn remove(&self, id: &str) -> Result<()> {
-        if let Ok(entry) = keyring::Entry::new(SERVICE, id) {
-            let _ = entry.delete_credential();
-        }
-        self.remove_from_fallback(id)
+        self.remove_named(SERVICE, id)
     }
 
     fn read_fallback(&self) -> Result<std::collections::HashMap<String, String>> {

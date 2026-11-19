@@ -61,7 +61,8 @@ async function submit() {
 </script>
 
 <template>
-  <div v-if="auth.loginDialogOpen" class="modal-mask" role="dialog" aria-modal="true" aria-label="登录" @click.self="close">
+  <!-- 点空白不关闭：mask 不加 @click.self，只有取消 / 登录 / ESC -->
+  <div v-if="auth.loginDialogOpen" class="modal-mask" role="dialog" aria-modal="true" aria-label="登录">
     <div class="modal login-modal">
       <h3>{{ mode === 'login' ? '登录都客账号' : '注册都客账号' }}</h3>
       <p v-if="mode === 'login' && auth.pendingReason">{{ auth.pendingReason }}</p>

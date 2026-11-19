@@ -12,3 +12,8 @@ src-tauri/*.dat
 # 临时/缓存
 *.tmp
 *.corrupted.json
+
+# 发布产物
+publish/*.exe
+publish/*.msi
+publish/*.zip

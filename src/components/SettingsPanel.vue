@@ -47,10 +47,10 @@ function setThinking(v: string) {
   <div class="panel-page">
     <div class="panel-inner">
       <div style="display:flex;justify-content:space-between;align-items:center;">
-        <h2>模型设置</h2>
+        <h2>高级设置</h2>
         <span v-if="!saved" class="tag" style="background:var(--warn-bg);color:var(--warn-text);">● 有未保存的更改</span>
       </div>
-      <p style="color:var(--text-muted);margin-top:0;">配置 OpenAI 兼容中转站，可添加多个并切换。</p>
+      <p style="color:var(--text-muted);margin-top:0;">配置工作目录、生成参数、工具策略、外观与系统提示词。模型服务商请在「模型设置」中管理。</p>
 
       <template v-if="config">
         <div class="card">
