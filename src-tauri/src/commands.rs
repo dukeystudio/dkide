@@ -33,15 +33,29 @@ pub fn get_config(state: State<'_, AppState>) -> Result<AppConfig> {
 
 #[tauri::command]
 pub fn save_config(state: State<'_, AppState>, config: AppConfig) -> Result<()> {
-    let workspace_changed = {
-        let old = state.config.lock().unwrap().workspace_path.clone();
-        old != config.workspace_path
+    let (workspace_changed, removed_provider_ids) = {
+        let old = state.config.lock().unwrap();
+        let removed = old.providers.iter()
+            .filter(|p| !config.providers.iter().any(|n| n.id == p.id))
+            .map(|p| p.id.clone())
+            .collect::<Vec<_>>();
+        (old.workspace_path != config.workspace_path, removed)
     };
     *state.config.lock().unwrap() = config.clone();
     state.save_config()?;
-    if workspace_changed && !config.workspace_path.trim().is_empty() {
+    // 清理已删除服务商在钥匙串里残留的 API Key
+    for id in removed_provider_ids {
+        let _ = state.secure_store.remove(&id);
+    }
+    // 工作目录变更时同步技能管理器；清空时回退到应用数据目录
+    if workspace_changed {
         let mut mgr = state.skill_manager.lock().unwrap();
-        mgr.set_workspace(PathBuf::from(&config.workspace_path));
+        let path = if config.workspace_path.trim().is_empty() {
+            state.store.skills_dir()
+        } else {
+            PathBuf::from(&config.workspace_path)
+        };
+        mgr.set_workspace(path);
     }
     Ok(())
 }
@@ -138,6 +152,25 @@ pub fn delete_message(state: State<'_, AppState>, session_id: String, message_id
     let mut sessions = state.sessions.lock().unwrap();
     if let Some(session) = sessions.iter_mut().find(|s| s.id == session_id) {
         session.messages.retain(|m| m.id != message_id);
+    }
+    drop(sessions);
+    state.save_sessions()
+}
+
+/// 按 id 原位更新消息内容（编辑消息用），避免 append 产生重复消息
+#[tauri::command]
+pub fn update_message(
+    state: State<'_, AppState>,
+    session_id: String,
+    message_id: String,
+    content: String,
+) -> Result<()> {
+    let mut sessions = state.sessions.lock().unwrap();
+    if let Some(session) = sessions.iter_mut().find(|s| s.id == session_id) {
+        if let Some(msg) = session.messages.iter_mut().find(|m| m.id == message_id) {
+            msg.content = content;
+            session.updated_at = chrono::Utc::now().timestamp();
+        }
     }
     drop(sessions);
     state.save_sessions()
@@ -347,37 +380,14 @@ pub async fn list_marketplace(http: State<'_, reqwest::Client>, state: State<'_,
         config.marketplace_url.clone()
     };
     if url.trim().is_empty() {
-        // 返回内置推荐技能目录
-        return Ok(builtin_marketplace());
+        // 未配置技能市场索引时不返回虚假的内置条目，避免用户点击安装必然失败
+        return Ok(Vec::new());
     }
     let resp = http.get(&url).timeout(Duration::from_secs(20)).send().await
         .map_err(|e| AppError(format!("获取技能市场失败: {}", e)))?;
     let skills: Vec<MarketSkill> = resp.json().await
         .map_err(|e| AppError(format!("解析技能市场失败: {}", e)))?;
     Ok(skills)
-}
-
-fn builtin_marketplace() -> Vec<MarketSkill> {
-    vec![
-        MarketSkill {
-            name: "文档摘要".into(),
-            description: "快速提炼长文档要点，生成结构化摘要".into(),
-            author: "都客AI助手 官方".into(),
-            url: "https://example.com/skills/doc-summary.zip".into(),
-        },
-        MarketSkill {
-            name: "代码审查".into(),
-            description: "审查代码质量、安全与可维护性".into(),
-            author: "都客AI助手 官方".into(),
-            url: "https://example.com/skills/code-review.zip".into(),
-        },
-        MarketSkill {
-            name: "数据分析".into(),
-            description: "数据清洗、统计分析与可视化建议".into(),
-            author: "社区".into(),
-            url: "https://example.com/skills/data-analysis.zip".into(),
-        },
-    ]
 }
 
 // ---------- 系统 ----------

@@ -3,16 +3,22 @@ import { ref, computed, watch } from 'vue';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useChatStore } from '../store';
 import { api } from '../api';
-import type { Provider } from '../types';
+import type { AppConfig, Provider } from '../types';
 
 const store = useChatStore();
 const result = ref('');
 const testing = ref(false);
 const saved = ref(true);
+// 使用本地草稿，避免未点保存就改到内存配置导致前后端静默分叉
+const draft = ref<AppConfig | null>(null);
 
-const config = computed(() => store.config);
+const config = computed(() => draft.value);
 
-watch(() => config.value, () => { saved.value = false; }, { deep: true });
+watch(() => store.config, (c) => {
+  if (c && (!draft.value || saved.value)) draft.value = JSON.parse(JSON.stringify(c));
+}, { immediate: true });
+
+watch(draft, () => { saved.value = false; }, { deep: true });
 
 const presets = [
   { name: 'OpenAI', url: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
@@ -41,7 +47,9 @@ function removeProvider(id: string) {
 }
 
 async function save() {
-  if (config.value) await store.saveConfig(config.value);
+  if (!config.value) return;
+  const next = JSON.parse(JSON.stringify(config.value)) as AppConfig;
+  await store.saveConfig(next);
   saved.value = true;
   result.value = '设置已保存';
 }

@@ -16,12 +16,27 @@ const store = useChatStore();
 const auth = useAuthStore();
 const collapsed = ref(false);
 const ready = ref(false);
+const initError = ref('');
 
 onMounted(async () => {
-  await store.init();
-  ready.value = true;
-  auth.init();
+  try {
+    await Promise.all([store.init(), auth.init()]);
+    ready.value = true;
+  } catch (e: any) {
+    initError.value = typeof e === 'string' ? e : e?.message ?? String(e);
+  }
 });
+
+async function retryInit() {
+  initError.value = '';
+  ready.value = false;
+  try {
+    await Promise.all([store.init(), auth.init()]);
+    ready.value = true;
+  } catch (e: any) {
+    initError.value = typeof e === 'string' ? e : e?.message ?? String(e);
+  }
+}
 
 const activeProvider = computed(() => {
   const c = store.config;
@@ -37,18 +52,27 @@ function goSettings() {
 </script>
 
 <template>
-  <div v-if="ready" class="app-shell">
+  <div v-if="initError" class="init-error">
+    <div class="card" style="max-width:460px;width:90vw;">
+      <h2>启动失败</h2>
+      <p style="color:var(--text-muted);line-height:1.7;">应用初始化时出错：{{ initError }}</p>
+      <p style="color:var(--text-faint);font-size:12px;">你的数据不会被删除，可重试启动。</p>
+      <button class="btn btn-primary" @click="retryInit">重试</button>
+    </div>
+  </div>
+
+  <div v-else-if="ready" class="app-shell">
     <Sidebar :page="page" :collapsed="collapsed" @navigate="onNavigate" @toggle-collapse="collapsed = !collapsed" />
     <main class="main">
       <ChatView
-        v-if="page === 'chat'"
+        v-show="page === 'chat'"
         :provider="activeProvider"
         @open-settings="page = 'settings'"
         @open-skills="page = 'skills'"
       />
-      <SettingsPanel v-else-if="page === 'settings'" />
-      <SkillsPanel v-else-if="page === 'skills'" />
-      <AboutPanel v-else-if="page === 'about'" />
+      <SettingsPanel v-if="page === 'settings'" />
+      <SkillsPanel v-if="page === 'skills'" />
+      <AboutPanel v-if="page === 'about'" />
     </main>
   </div>
 

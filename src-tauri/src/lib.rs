@@ -48,6 +48,7 @@ pub fn run() {
             commands::toggle_pin_session,
             commands::append_message,
             commands::delete_message,
+            commands::update_message,
             commands::export_session,
             commands::chat,
             commands::cancel_chat,

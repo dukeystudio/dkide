@@ -2,11 +2,11 @@ import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js/lib/common';
 import 'highlight.js/styles/github.css';
 
-const md = new MarkdownIt({
+const md: MarkdownIt = new MarkdownIt({
   html: false,
   linkify: true,
   breaks: true,
-  highlight(str, lang) {
+  highlight(str: string, lang: string): string {
     let code: string;
     if (lang && hljs.getLanguage(lang)) {
       try {
@@ -17,7 +17,7 @@ const md = new MarkdownIt({
     } else {
       code = md.utils.escapeHtml(str);
     }
-    const label = lang || 'text';
+    const label = md.utils.escapeHtml(lang || 'text');
     return `<div class="code-wrap"><button class="copy-code">复制</button><pre><code class="hljs" data-lang="${label}">${code}</code></pre></div>`;
   },
 });

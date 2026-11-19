@@ -82,7 +82,8 @@ async function doLogout() {
         </button>
         <div v-if="accountMenuOpen && auth.isLoggedIn" class="account-menu">
           <div class="account-menu-title">{{ auth.account }}</div>
-          <div v-if="auth.session?.expire_display" class="account-menu-sub">{{ auth.session.expire_display }}</div>
+          <div class="account-menu-sub">余额 {{ auth.session?.coin ?? 0 }} · {{ auth.session?.expire_display || '有效期未知' }}</div>
+          <button class="account-menu-item refresh" @click="auth.refreshQuota()">🔄 刷新余额</button>
           <button class="account-menu-item" @click="doLogout">退出登录</button>
         </div>
       </div>

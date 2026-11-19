@@ -22,7 +22,7 @@ onMounted(async () => {
         <p style="color:var(--text-muted);line-height:1.8;">
           都客AI助手（dkide）是一款本地优先的桌面 AI 助手，支持接入 OpenAI 兼容的模型中转站，
           通过技能（Skills）与内置工具扩展能力。你的对话数据与配置均存储在本地，
-          API Key 保存于系统钥匙串。
+          API Key 优先保存于系统钥匙串。
         </p>
       </div>
 
@@ -30,7 +30,7 @@ onMounted(async () => {
         <div class="card-title">隐私与安全</div>
         <ul style="color:var(--text-muted);line-height:1.9;padding-left:20px;">
           <li>对话历史与配置保存在本机应用数据目录，不上传云端</li>
-          <li>API Key 存于系统钥匙串，配置文件中不包含明文密钥</li>
+          <li>API Key 优先存于系统钥匙串（不可用时降级为本地受保护存储），配置文件中不含明文密钥</li>
           <li>文件工具限制在指定工作目录内，阻止路径穿越</li>
           <li>命令工具支持黑名单、超时与用户审批，危险操作需手动确认</li>
           <li>技能 ZIP 安装经过 Zip Slip 路径校验</li>

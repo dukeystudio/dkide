@@ -115,7 +115,10 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function requireProvider(): boolean {
-    if (config.value?.providers.some((p) => p.api_key)) return true;
+    const c = config.value;
+    if (!c) { providerRequired.value = true; return false; }
+    const active = c.providers.find((p) => p.id === c.active_provider_id) ?? c.providers[0];
+    if (active?.api_key?.trim()) return true;
     providerRequired.value = true;
     return false;
   }
@@ -249,7 +252,7 @@ export const useChatStore = defineStore('chat', () => {
     const idx = session.messages.findIndex((m) => m.id === messageId);
     if (idx < 0) return;
     session.messages[idx].content = newContent;
-    await api.appendMessage(session.id, { ...session.messages[idx], content: newContent });
+    await api.updateMessage(session.id, messageId, newContent);
   }
 
   async function saveConfig(next: AppConfig) {

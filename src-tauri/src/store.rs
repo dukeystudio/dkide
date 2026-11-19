@@ -62,10 +62,16 @@ impl Store {
             return Ok(Vec::new());
         }
         let text = std::fs::read_to_string(&self.sessions_path)?;
-        serde_json::from_str(&text).map_err(|e| {
-            logger::error(format!("会话文件解析失败: {}", e));
-            AppError(format!("会话文件解析失败: {}", e))
-        })
+        match serde_json::from_str::<Vec<Session>>(&text) {
+            Ok(sessions) => Ok(sessions),
+            Err(e) => {
+                // 会话文件损坏时备份后降级为空，避免应用无法启动
+                logger::error(format!("会话文件解析失败，已备份: {}", e));
+                let backup = self.dir.join("sessions.corrupted.json");
+                let _ = std::fs::copy(&self.sessions_path, backup);
+                Ok(Vec::new())
+            }
+        }
     }
 
     pub fn save_sessions(&self, sessions: &[Session]) -> Result<()> {

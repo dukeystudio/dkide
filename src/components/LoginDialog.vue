@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { ref, watch, onMounted, onUnmounted } from 'vue';
 import { useAuthStore } from '../authStore';
 
 const auth = useAuthStore();
@@ -22,6 +22,12 @@ function close() {
   auth.pendingReason = '';
   auth.error = '';
 }
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && auth.loginDialogOpen) close();
+}
+onMounted(() => document.addEventListener('keydown', onKeydown));
+onUnmounted(() => document.removeEventListener('keydown', onKeydown));
 
 function switchMode(next: 'login' | 'register') {
   mode.value = next;
@@ -55,7 +61,7 @@ async function submit() {
 </script>
 
 <template>
-  <div v-if="auth.loginDialogOpen" class="modal-mask" @click.self="close">
+  <div v-if="auth.loginDialogOpen" class="modal-mask" role="dialog" aria-modal="true" aria-label="登录" @click.self="close">
     <div class="modal login-modal">
       <h3>{{ mode === 'login' ? '登录都客账号' : '注册都客账号' }}</h3>
       <p v-if="mode === 'login' && auth.pendingReason">{{ auth.pendingReason }}</p>

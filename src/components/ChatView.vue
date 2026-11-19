@@ -2,6 +2,7 @@
 import { ref, nextTick, watch, computed, onMounted, onUnmounted } from 'vue';
 import { useChatStore } from '../store';
 import { useSkillsStore } from '../skillsStore';
+import { api } from '../api';
 import { renderMarkdown, copyText } from '../markdown';
 import type { Provider, Message, ToolCallView } from '../types';
 
@@ -131,7 +132,15 @@ async function onBubbleClick(e: MouseEvent) {
   <div class="chat-view" style="display:flex;flex-direction:column;height:100%;">
     <div class="topbar">
       <div class="topbar-title">{{ session?.title ?? '对话' }}</div>
-      <div class="topbar-provider"><span class="model-badge">{{ renderedProvider }}</span></div>
+      <div class="topbar-provider">
+        <button
+          v-if="session?.messages.length"
+          class="topbar-export"
+          title="导出当前对话为 Markdown"
+          @click="api.exportSession(session.id, session.title)"
+        >⬇ 导出</button>
+        <span class="model-badge">{{ renderedProvider }}</span>
+      </div>
     </div>
 
     <div class="messages" ref="messagesEl">

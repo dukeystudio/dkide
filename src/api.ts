@@ -37,6 +37,8 @@ export const api = {
     invoke<void>('append_message', { sessionId, message }),
   deleteMessage: (sessionId: string, messageId: string) =>
     invoke<void>('delete_message', { sessionId, messageId }),
+  updateMessage: (sessionId: string, messageId: string, content: string) =>
+    invoke<void>('update_message', { sessionId, messageId, content }),
   exportSession: async (sessionId: string, title: string) => {
     const path = await save({
       defaultPath: `${title.replace(/[\\/:*?"<>|]/g, '_')}.md`,
