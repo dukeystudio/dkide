@@ -246,20 +246,25 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   let undoing = false;
-  /** 撤销最近一轮：删除最后一条用户消息及其后的所有消息（含助手回复与工具结果） */
-  async function undo(): Promise<boolean> {
+  /**
+   * 撤销：删除指定 user 消息及其后的所有消息（含助手回复与工具结果）。
+   * @param messageId 要撤销到的那条 user 消息 id；省略 = 撤最近一轮（最后一条 user 消息）。
+   */
+  async function undo(messageId?: string): Promise<boolean> {
     if (undoing) return false; // 防连点：上一次 listSessions 未 resolve 前不再触发，避免拿旧快照
     const session = currentSession.value;
     if (!session || isStreaming(session.id)) return false;
-    // 定位最后一条 user 消息
     let userIdx = -1;
-    for (let i = session.messages.length - 1; i >= 0; i--) {
-      if (session.messages[i].role === 'user') { userIdx = i; break; }
+    if (messageId) {
+      userIdx = session.messages.findIndex((m) => m.id === messageId && m.role === 'user');
+    } else {
+      for (let i = session.messages.length - 1; i >= 0; i--) {
+        if (session.messages[i].role === 'user') { userIdx = i; break; }
+      }
     }
     if (userIdx < 0) return false;
     undoing = true;
     try {
-      // 删除该 user 消息及之后的所有消息
       const toRemove = session.messages.slice(userIdx);
       for (const m of toRemove) {
         await api.deleteMessage(session.id, m.id);

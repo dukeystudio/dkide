@@ -253,6 +253,7 @@ async function onBubbleClick(e: MouseEvent) {
                 <button @click="copyMessage(m)">{{ copiedId === m.id ? '已复制' : '复制' }}</button>
                 <button v-if="m.role === 'assistant'" @click="store.regenerate(mi)">重新生成</button>
                 <button @click="startEdit(m)">编辑</button>
+                <button v-if="m.role === 'user'" title="撤销到此：删除该条提问及其后所有回复" @click="store.undo(m.id)">↩ 撤销到此</button>
                 <button @click="store.deleteMessage(store.currentId!, m.id)">删除</button>
               </div>
             </div>
@@ -400,12 +401,6 @@ async function onBubbleClick(e: MouseEvent) {
               </div>
             </div>
             <div class="composer-actions">
-              <button
-                v-if="!streaming && session?.messages.some((m) => m.role === 'user')"
-                class="undo-btn"
-                title="撤销最近一轮（删除上一条提问及其回答）"
-                @click="store.undo()"
-              >↩ 撤销</button>
               <button v-if="streaming" class="stop-btn" @click="store.cancel(store.currentId!)">停止生成</button>
               <button v-else class="send-btn" :disabled="!input.trim()" @click="send">发送</button>
             </div>
