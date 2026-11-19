@@ -75,14 +75,17 @@ async function doLogout() {
           class="nav-btn account-entry"
           :class="{ active: accountMenuOpen }"
           @click="onAccountClick"
-          :title="auth.isLoggedIn ? auth.account : '登录'"
+          :title="auth.isLoggedIn ? `账号 ${auth.maskedAccount} · 到期 ${auth.session?.expire_display || '未知'}` : '登录'"
         >
           <span class="nav-icon">👤</span>
-          <span class="account-label">{{ auth.isLoggedIn ? auth.account : '登录' }}</span>
+          <span class="account-label">{{ auth.isLoggedIn ? auth.maskedAccount : '登录' }}</span>
         </button>
         <div v-if="accountMenuOpen && auth.isLoggedIn" class="account-menu">
-          <div class="account-menu-title">{{ auth.account }}</div>
-          <div class="account-menu-sub">余额 {{ auth.session?.coin ?? 0 }} · {{ auth.session?.expire_display || '有效期未知' }}</div>
+          <div class="account-menu-title">{{ auth.maskedAccount }}</div>
+          <div class="account-menu-sub">💰 余额 {{ auth.session?.coin ?? 0 }}</div>
+          <div class="account-menu-sub" :title="`到期时间：${auth.session?.expire_display || '未知'}`">
+            ⏳ 到期 {{ auth.session?.expire_display || '未知' }}
+          </div>
           <button class="account-menu-item refresh" @click="auth.refreshQuota()">🔄 刷新余额</button>
           <button class="account-menu-item" @click="doLogout">退出登录</button>
         </div>

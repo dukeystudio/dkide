@@ -3,6 +3,7 @@ import { ref, nextTick, watch, computed, onMounted, onUnmounted } from 'vue';
 import { useChatStore } from '../store';
 import { useSkillsStore } from '../skillsStore';
 import { api } from '../api';
+import ThemeMenu from './ThemeMenu.vue';
 import { renderMarkdown, copyText } from '../markdown';
 import type { Provider, Message, ToolCallView } from '../types';
 
@@ -139,6 +140,7 @@ async function onBubbleClick(e: MouseEvent) {
           title="导出当前对话为 Markdown"
           @click="api.exportSession(session.id, session.title)"
         >⬇ 导出</button>
+        <ThemeMenu />
         <span class="model-badge">{{ renderedProvider }}</span>
       </div>
     </div>

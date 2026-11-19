@@ -13,6 +13,21 @@ export const useAuthStore = defineStore('auth', () => {
   const isLoggedIn = computed(() => session.value !== null);
   const account = computed(() => session.value?.account ?? '');
 
+  /** 账号脱敏：邮箱保留本地部分首尾，中间打码（如 388*****972@qq.com） */
+  const maskedAccount = computed(() => {
+    const raw = account.value;
+    if (!raw) return '';
+    if (raw.includes('@')) {
+      const [local, domain] = raw.split('@');
+      const head = local.slice(0, 3);
+      const tail = local.length > 5 ? local.slice(-3) : '';
+      const stars = Math.max(1, local.length - head.length - tail.length);
+      return `${head}${'*'.repeat(stars)}${tail}@${domain}`;
+    }
+    if (raw.length <= 4) return raw;
+    return `${raw.slice(0, 2)}${'*'.repeat(raw.length - 4)}${raw.slice(-2)}`;
+  });
+
   async function init() {
     verifying.value = true;
     try {
@@ -74,7 +89,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   return {
     session, verifying, loginDialogOpen, pendingReason, error,
-    isLoggedIn, account,
+    isLoggedIn, account, maskedAccount,
     init, login, register, logout, refreshQuota, requireLogin,
   };
 });
