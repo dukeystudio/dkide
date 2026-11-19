@@ -31,10 +31,6 @@ impl AppState {
             if let Some(key) = secure_store.get(&provider.id) {
                 provider.api_key = key;
             }
-            // 内置 Agnes 服务：key 随版本内置，用户无需填写
-            if provider.api_key.is_empty() && crate::models::is_builtin_agnes(&provider.base_url) {
-                provider.api_key = crate::models::BUILTIN_AGNES_API_KEY.into();
-            }
         }
 
         let sessions = store.load_sessions()?;
@@ -66,10 +62,6 @@ impl AppState {
     pub fn save_config(&self) -> Result<()> {
         let config = self.config.lock().unwrap();
         for provider in &config.providers {
-            // 内置 Agnes 的 key 是随版本的内置凭据，不写入用户钥匙串，避免污染
-            if provider.api_key == crate::models::BUILTIN_AGNES_API_KEY {
-                continue;
-            }
             self.secure_store.set(&provider.id, &provider.api_key)?;
         }
         let mut safe_config = config.clone();

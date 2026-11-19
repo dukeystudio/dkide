@@ -24,17 +24,19 @@ watch(() => store.config, (c) => {
 
 watch(draft, () => { saved.value = false; }, { deep: true });
 
+/** 常用服务商预设：选中即填好 base_url 与模型，用户再各自申请 key 填入 */
 const presets = [
-  { name: 'Agnes 3.0 Flash（国内）', url: 'https://api.agnes-ai.cn/v1', model: 'agnes-3.0-flash', builtin: true },
-  { name: 'OpenAI', url: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
-  { name: 'DeepSeek', url: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
-  { name: 'Moonshot', url: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
-  { name: '智谱', url: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4' },
+  { name: 'Agnes（国内）', url: 'https://api.agnes-ai.cn/v1', model: 'agnes-3.0-flash', apply: 'https://platform.agnes-ai.cn' },
+  { name: 'OpenAI', url: 'https://api.openai.com/v1', model: 'gpt-4o-mini', apply: 'https://platform.openai.com/api-keys' },
+  { name: 'DeepSeek', url: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apply: 'https://platform.deepseek.com/api_keys' },
+  { name: 'Moonshot', url: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k', apply: 'https://platform.moonshot.cn' },
+  { name: '智谱', url: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4', apply: 'https://open.bigmodel.cn' },
 ];
 
-/** 内置 Agnes 服务（base_url 指向 agnes-ai.cn），key 随版本内置，无需填写 */
-function isBuiltin(p: Provider): boolean {
-  return p.id === 'builtin-agnes' || /agnes-ai\.cn/i.test(p.base_url);
+/** 按 base_url 反查预设的 key 申请链接；没有匹配则返回 null */
+function applyLink(p: Provider): string | null {
+  const host = (u: string) => { try { return new URL(u).host; } catch { return u; } };
+  return presets.find((x) => host(x.url) === host(p.base_url))?.apply ?? null;
 }
 
 function addProvider(preset?: (typeof presets)[0]) {
@@ -96,26 +98,30 @@ async function pickWorkspace() {
             <label style="display:flex;align-items:center;gap:8px;font-weight:600;">
               <input type="radio" :value="p.id" v-model="config.active_provider_id" name="active" />
               {{ p.name }}
-              <span v-if="isBuiltin(p)" class="tag" style="background:var(--primary-soft);color:var(--primary-text);">内置</span>
             </label>
-            <button v-if="!isBuiltin(p)" class="btn btn-danger btn-sm" @click="removeProvider(p.id)">删除</button>
+            <button class="btn btn-danger btn-sm" @click="removeProvider(p.id)">删除</button>
           </div>
           <div class="row">
-            <div class="field"><label>名称</label><input v-model="p.name" :disabled="isBuiltin(p)" /></div>
+            <div class="field"><label>名称</label><input v-model="p.name" /></div>
             <div class="field"><label>模型名称</label><input v-model="p.model" placeholder="gpt-4o-mini" /></div>
           </div>
-          <div class="field"><label>Base URL（以 /v1 结尾）</label><input v-model="p.base_url" :disabled="isBuiltin(p)" /></div>
+          <div class="field"><label>Base URL（以 /v1 结尾）</label><input v-model="p.base_url" /></div>
           <div class="field">
-            <label>{{ isBuiltin(p) ? 'API Key（内置，无需填写）' : 'API Key（存入系统钥匙串）' }}</label>
-            <input v-if="!isBuiltin(p)" v-model="p.api_key" type="password" placeholder="sk-..." />
-            <input v-else value="内置 Agnes 凭据，开箱即用" disabled />
+            <label>API Key（存入系统钥匙串）</label>
+            <input v-model="p.api_key" type="password" placeholder="sk-... / cpk-..." />
           </div>
-          <button class="btn btn-sm" :disabled="testing" @click="test(p)">测试连接</button>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <button class="btn btn-sm" :disabled="testing" @click="test(p)">测试连接</button>
+            <a v-if="applyLink(p)" :href="applyLink(p) as string" target="_blank" class="apply-link" rel="noopener">没有 key？去申请 →</a>
+          </div>
         </div>
 
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;">
-          <button v-for="p in presets" :key="p.name" class="btn btn-sm" @click="addProvider(p)">+ {{ p.name }}</button>
-          <button class="btn btn-sm" @click="addProvider()">+ 自定义</button>
+        <div class="preset-group">
+          <div class="preset-label">常用服务商（点选自动填好 Base URL 与模型，再各自申请 key）</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button v-for="p in presets" :key="p.name" class="btn btn-sm" @click="addProvider(p)">+ {{ p.name }}</button>
+            <button class="btn btn-sm" @click="addProvider()">+ 自定义</button>
+          </div>
         </div>
 
         <div class="card">
