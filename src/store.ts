@@ -244,8 +244,10 @@ export const useChatStore = defineStore('chat', () => {
     await api.cancelChat(sid);
   }
 
+  let undoing = false;
   /** 撤销最近一轮：删除最后一条用户消息及其后的所有消息（含助手回复与工具结果） */
   async function undo(): Promise<boolean> {
+    if (undoing) return false; // 防连点：上一次 listSessions 未 resolve 前不再触发，避免拿旧快照
     const session = currentSession.value;
     if (!session || isStreaming(session.id)) return false;
     // 定位最后一条 user 消息
@@ -254,14 +256,19 @@ export const useChatStore = defineStore('chat', () => {
       if (session.messages[i].role === 'user') { userIdx = i; break; }
     }
     if (userIdx < 0) return false;
-    // 删除该 user 消息及之后的所有消息
-    const toRemove = session.messages.slice(userIdx);
-    for (const m of toRemove) {
-      await api.deleteMessage(session.id, m.id);
+    undoing = true;
+    try {
+      // 删除该 user 消息及之后的所有消息
+      const toRemove = session.messages.slice(userIdx);
+      for (const m of toRemove) {
+        await api.deleteMessage(session.id, m.id);
+      }
+      session.messages = session.messages.slice(0, userIdx);
+      sessions.value = await api.listSessions();
+      return true;
+    } finally {
+      undoing = false;
     }
-    session.messages = session.messages.slice(0, userIdx);
-    sessions.value = await api.listSessions();
-    return true;
   }
 
   async function regenerate(messageIndex: number) {
@@ -289,25 +296,25 @@ export const useChatStore = defineStore('chat', () => {
    * 保存修改 → 删除该用户消息之后的所有回复 → 基于新内容重新生成。
    * onlyUpdate=true 时只保存不重新生成。
    */
-  async function editMessage(messageId: string, newContent: string, onlyUpdate = false) {
+  /** 返回 true 表示保存成功；false 表示目标消息不在当前会话（如切会话后）未保存。 */
+  async function editMessage(messageId: string, newContent: string, onlyUpdate = false): Promise<boolean> {
     const session = currentSession.value;
-    if (!session || isStreaming(session.id)) return;
+    if (!session || isStreaming(session.id)) return false;
     const idx = session.messages.findIndex((m) => m.id === messageId);
-    if (idx < 0) return;
+    if (idx < 0) return false; // 已切到别的会话，findIndex 找不到 → 不静默吞掉
     session.messages[idx].content = newContent;
     await api.updateMessage(session.id, messageId, newContent);
-    if (onlyUpdate) return;
+    if (onlyUpdate) return true;
 
     // 删除该用户消息之后的所有回复（保留这条被改的用户消息）
     const after = session.messages.slice(idx + 1);
     for (const m of after) await api.deleteMessage(session.id, m.id);
     session.messages = session.messages.slice(0, idx + 1);
 
-    // 重新生成：去掉这条用户消息再 send，send() 会把它作为新消息追加并流式生成
-    const before = session.messages.slice(0, idx);
-    for (const m of before) { /* 保留不动 */ }
-    session.messages = before;
+    // 重新生成：去掉这条被编辑的用户消息，send 会把它作为新消息追加并流式生成
+    session.messages = session.messages.slice(0, idx);
     await send(newContent);
+    return true;
   }
 
   async function saveConfig(next: AppConfig) {

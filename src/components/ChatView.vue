@@ -36,6 +36,7 @@ const previewContent = ref('');
 const previewLoading = ref(false);
 const previewError = ref('');
 const copiedFileId = ref('');
+const copyTip = ref('');
 const renderedProvider = computed(() =>
   props.provider ? `${props.provider.name} · ${props.provider.model}` : '未配置模型'
 );
@@ -142,7 +143,8 @@ async function copyMessage(m: Message) {
 
 function startEdit(m: Message) { editingId.value = m.id; editContent.value = m.content; }
 async function saveEdit(m: Message, onlyUpdate = false) {
-  await store.editMessage(m.id, editContent.value, onlyUpdate);
+  const ok = await store.editMessage(m.id, editContent.value, onlyUpdate);
+  if (!ok) showCopyTip('未保存：已切换到其他会话，请回到原会话再编辑');
   editingId.value = null;
 }
 
@@ -163,15 +165,27 @@ function closeFilePreview() { previewFile.value = null; previewContent.value = '
 async function openFileInOs(f: GeneratedFile) {
   await api.openFileInOs(f.abs_path);
 }
+function showCopyTip(msg: string) {
+  copyTip.value = msg;
+  setTimeout(() => { if (copyTip.value === msg) copyTip.value = ''; }, 2500);
+}
 async function copyFileContent(f: GeneratedFile) {
-  // 抽屉已加载该文件就直接用，否则读一次
-  let text = f.abs_path === previewFile.value?.abs_path ? previewContent.value : '';
+  // 抽屉已加载且无错误就直接用；否则（二进制/越界/loading）重新读一次
+  const fromPreview = f.abs_path === previewFile.value?.abs_path ? previewContent.value : '';
+  let text = (!previewError.value && fromPreview) ? fromPreview : '';
   if (!text) {
-    try { text = await api.readFilePreview(f.abs_path); } catch { return; }
+    try { text = await api.readFilePreview(f.abs_path); }
+    catch (e: any) {
+      const reason = typeof e === 'string' ? e : e?.message ?? String(e);
+      showCopyTip(`复制失败：${reason}`);
+      return;
+    }
   }
   await copyText(text);
   copiedFileId.value = f.abs_path;
   setTimeout(() => { if (copiedFileId.value === f.abs_path) copiedFileId.value = ''; }, 1500);
+  // 截断内容给出提示（后端在结尾追加了"…已截断"标记）
+  if (text.includes('…（内容过长已截断')) showCopyTip('已复制（内容过长，仅前 10 万字符）');
 }
 function fileIcon(f: GeneratedFile) {
   const ext = f.path.split('.').pop()?.toLowerCase() ?? '';
@@ -316,6 +330,7 @@ async function onBubbleClick(e: MouseEvent) {
     <div class="composer">
       <div class="composer-inner">
         <div v-if="store.error" class="error-box">{{ store.error }}</div>
+        <div v-if="copyTip" class="copy-tip">{{ copyTip }}</div>
         <div class="composer-box">
           <textarea
             v-model="input"

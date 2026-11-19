@@ -66,14 +66,22 @@ async function save() {
   await store.saveConfig(next);
   saved.value = true;
   result.value = '设置已保存';
+  testResults.value = {}; // 配置已变，旧的连接测试结果失效，清掉避免误导
 }
 
+// 该 provider 是否正在测试中（防止重复发同一请求）
+function isTesting(id: string) { return testing.value && testProviderId.value === id; }
 async function test(p: Provider) {
-  testing.value = true;
+  // 已在测该 provider 就直接返回，避免重复发
+  if (isTesting(p.id)) return;
+  // 快照，避免等待期间表单被改导致结果与显示错位
+  const snap: Provider = JSON.parse(JSON.stringify(p));
   testProviderId.value = p.id;
+  testing.value = true;
   testResults.value[p.id] = { ok: false, text: '测试中…' };
   try {
-    const ok = await api.testProvider(p);
+    const ok = await api.testProvider(snap);
+    // 仅当期间没被别的测试覆盖时才写（防止 A 慢 B 快，A 回来后把 B 的结果盖掉）
     testResults.value[p.id] = { ok: true, text: `✓ ${ok}` };
     result.value = ok;
   } catch (e: any) {
@@ -81,8 +89,10 @@ async function test(p: Provider) {
     testResults.value[p.id] = { ok: false, text: `✗ ${msg}` };
     result.value = `失败: ${msg}`;
   } finally {
-    testing.value = false;
-    testProviderId.value = '';
+    if (testProviderId.value === p.id) {
+      testProviderId.value = '';
+      testing.value = false;
+    }
   }
 }
 

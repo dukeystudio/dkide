@@ -7,5 +7,14 @@
     "content": "同步进展（避免重复）：\n1. 测试连接已修：后端 commands.rs test_provider 加了空 base_url/api_key/model 前置拦截 + 30s 超时（friendly_req_error 区分超时/连接失败）+ 401/403/404/429 人话化；前端 SettingsPanel 结果改成每个 provider 卡片就近显示（testResults[id]），按钮 loading 态。\n2. 复制文件已修：ChatView copyFileContent 已接上文件行📋按钮 + 预览抽屉\"📋 复制\"按钮，带 copiedFileId \"✓已复制\" 反馈。\n你聚焦查这两处的**剩余边界**（比如测试并发、复制二进制/超大文件截断提示）+ 登录态/撤销的回归风险即可，不用重查已修逻辑。",
     "timestamp": "2026-11-19T10:13:32.372Z",
     "read": true
+  },
+  {
+    "id": "msg-1795083386998-8yh6r1",
+    "from": "team-lead",
+    "to": "Tester",
+    "type": "message",
+    "content": "请把你排查出的剩余缺陷/回归风险结论发给我（按之前任务：测试连接边界、登录态边界、生成文件复制边界、撤销/编辑回归）。已修点我已同步给你，聚焦剩余未覆盖项即可。",
+    "timestamp": "2026-11-19T10:16:26.998Z",
+    "read": true
   }
 ]
