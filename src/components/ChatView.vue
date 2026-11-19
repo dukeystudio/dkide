@@ -1,17 +1,22 @@
 <script setup lang="ts">
-import { ref, nextTick, watch, computed } from 'vue';
+import { ref, nextTick, watch, computed, onMounted, onUnmounted } from 'vue';
 import { useChatStore } from '../store';
+import { useSkillsStore } from '../skillsStore';
 import { renderMarkdown, copyText } from '../markdown';
 import type { Provider, Message, ToolCallView } from '../types';
 
 const props = defineProps<{ provider: Provider | null }>();
+const emit = defineEmits<{ openSettings: []; openSkills: [] }>();
 const store = useChatStore();
+const skills = useSkillsStore();
 const input = ref('');
 const messagesEl = ref<HTMLElement | null>(null);
 const expandedTools = ref<Set<string>>(new Set());
 const editingId = ref<string | null>(null);
 const editContent = ref('');
 const copiedId = ref('');
+const modelMenuOpen = ref(false);
+const skillMenuOpen = ref(false);
 
 const session = computed(() => store.currentSession);
 const streaming = computed(() => session.value ? store.isStreaming(session.value.id) : false);
@@ -21,12 +26,26 @@ const streamUsage = computed(() => session.value ? store.usageFor(session.value.
 const renderedProvider = computed(() =>
   props.provider ? `${props.provider.name} · ${props.provider.model}` : '未配置模型'
 );
+const enabledSkills = computed(() => {
+  const ids = new Set(store.config?.enabled_skills ?? []);
+  return skills.skills.filter((s) => ids.has(s.dir_name) || s.enabled);
+});
 
 function scrollToBottom() {
   nextTick(() => {
     if (messagesEl.value) messagesEl.value.scrollTop = messagesEl.value.scrollHeight;
   });
 }
+
+function onDocClick(e: MouseEvent) {
+  const el = e.target as HTMLElement;
+  if (!el.closest('.toolbar-menu')) {
+    modelMenuOpen.value = false;
+    skillMenuOpen.value = false;
+  }
+}
+onMounted(() => document.addEventListener('click', onDocClick));
+onUnmounted(() => document.removeEventListener('click', onDocClick));
 
 watch(
   () => [streamText.value, streamTools.value.length, session.value?.messages.length, store.currentId],
@@ -48,6 +67,27 @@ function onKeydown(e: KeyboardEvent) {
     e.preventDefault();
     send();
   }
+}
+
+async function selectProvider(p: Provider) {
+  modelMenuOpen.value = false;
+  const c = store.config;
+  if (!c || c.active_provider_id === p.id) return;
+  await store.saveConfig({ ...c, active_provider_id: p.id });
+}
+
+function onModelButtonClick() {
+  if (!store.config?.providers.some((p) => p.api_key)) {
+    emit('openSettings');
+    return;
+  }
+  modelMenuOpen.value = !modelMenuOpen.value;
+  skillMenuOpen.value = false;
+}
+
+function onSkillButtonClick() {
+  skillMenuOpen.value = !skillMenuOpen.value;
+  modelMenuOpen.value = false;
 }
 
 function toggleTool(idx: number) {
@@ -158,10 +198,58 @@ async function onBubbleClick(e: MouseEvent) {
             placeholder="输入消息，Enter 发送，Shift+Enter 换行"
             @keydown="onKeydown"
           ></textarea>
-          <div class="composer-actions">
-            <span class="hint">支持 Markdown · 技能与工具自动调用</span>
-            <button v-if="streaming" class="stop-btn" @click="store.cancel(store.currentId!)">停止生成</button>
-            <button v-else class="send-btn" :disabled="!input.trim()" @click="send">发送</button>
+          <div class="composer-toolbar">
+            <div class="toolbar-left">
+              <div class="toolbar-menu">
+                <button class="toolbar-btn" :class="{ open: modelMenuOpen }" @click="onModelButtonClick">
+                  <span class="tb-icon">◇</span>
+                  <span class="tb-label">{{ props.provider ? props.provider.model : '选择模型' }}</span>
+                  <span class="tb-caret">▾</span>
+                </button>
+                <div v-if="modelMenuOpen" class="toolbar-popover model-popover" @click.stop>
+                  <div class="popover-head">切换模型</div>
+                  <button
+                    v-for="p in store.config?.providers ?? []"
+                    :key="p.id"
+                    class="popover-item"
+                    :class="{ selected: p.id === store.config?.active_provider_id }"
+                    @click="selectProvider(p)"
+                  >
+                    <span class="pi-check">{{ p.id === store.config?.active_provider_id ? '✓' : '' }}</span>
+                    <span class="pi-main">
+                      <span class="pi-name">{{ p.name }}</span>
+                      <span class="pi-sub">{{ p.model }} · {{ p.base_url }}</span>
+                    </span>
+                  </button>
+                  <button class="popover-foot" @click="modelMenuOpen = false; emit('openSettings')">⚙️ 管理模型服务商</button>
+                </div>
+              </div>
+
+              <div class="toolbar-menu">
+                <button class="toolbar-btn" :class="{ open: skillMenuOpen }" @click="onSkillButtonClick">
+                  <span class="tb-icon">🧩</span>
+                  <span class="tb-label">技能</span>
+                  <span class="tb-count">{{ enabledSkills.length }}</span>
+                  <span class="tb-caret">▾</span>
+                </button>
+                <div v-if="skillMenuOpen" class="toolbar-popover skill-popover" @click.stop>
+                  <div class="popover-head">已启用技能（对话时按需自动加载）</div>
+                  <div v-if="!enabledSkills.length" class="popover-empty">还没有启用技能</div>
+                  <div v-for="s in enabledSkills" :key="s.dir_name" class="popover-item static">
+                    <span class="pi-check">✓</span>
+                    <span class="pi-main">
+                      <span class="pi-name">🧩 {{ s.meta.name }}</span>
+                      <span class="pi-sub">{{ s.meta.description || '暂无描述' }}</span>
+                    </span>
+                  </div>
+                  <button class="popover-foot" @click="skillMenuOpen = false; emit('openSkills')">＋ 管理 / 安装技能</button>
+                </div>
+              </div>
+            </div>
+            <div class="composer-actions">
+              <button v-if="streaming" class="stop-btn" @click="store.cancel(store.currentId!)">停止生成</button>
+              <button v-else class="send-btn" :disabled="!input.trim()" @click="send">发送</button>
+            </div>
           </div>
         </div>
       </div>

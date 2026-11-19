@@ -90,9 +90,6 @@ async function doLogout() {
       <button class="nav-btn" :class="{ active: page === 'chat' }" @click="emit('navigate', 'chat')" title="对话">
         <span class="nav-icon">💬</span><span class="nav-label">对话</span>
       </button>
-      <button class="nav-btn" :class="{ active: page === 'skills' }" @click="emit('navigate', 'skills')" title="技能管理">
-        <span class="nav-icon">🧩</span><span class="nav-label">技能管理</span>
-      </button>
       <button class="nav-btn" :class="{ active: page === 'settings' }" @click="emit('navigate', 'settings')" title="模型设置">
         <span class="nav-icon">⚙️</span><span class="nav-label">模型设置</span>
       </button>

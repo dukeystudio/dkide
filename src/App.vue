@@ -40,7 +40,12 @@ function goSettings() {
   <div v-if="ready" class="app-shell">
     <Sidebar :page="page" :collapsed="collapsed" @navigate="onNavigate" @toggle-collapse="collapsed = !collapsed" />
     <main class="main">
-      <ChatView v-if="page === 'chat'" :provider="activeProvider" />
+      <ChatView
+        v-if="page === 'chat'"
+        :provider="activeProvider"
+        @open-settings="page = 'settings'"
+        @open-skills="page = 'skills'"
+      />
       <SettingsPanel v-else-if="page === 'settings'" />
       <SkillsPanel v-else-if="page === 'skills'" />
       <AboutPanel v-else-if="page === 'about'" />
