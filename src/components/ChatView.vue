@@ -30,6 +30,11 @@ const streamUsage = computed(() => session.value ? store.usageFor(session.value.
 // 思考过程：生成中默认展开，生成完折叠（可手动点开）
 const reasoningOpen = ref(true);
 const filesOpen = ref(true);
+// 历史消息思考过程：按消息 id 记录展开状态（默认收起，点箭头展开）
+const historyReasoningOpen = ref<Record<string, boolean>>({});
+function toggleHistoryReasoning(id: string) {
+  historyReasoningOpen.value[id] = !historyReasoningOpen.value[id];
+}
 // 文件预览
 const previewFile = ref<GeneratedFile | null>(null);
 const previewContent = ref('');
@@ -260,7 +265,16 @@ async function onBubbleClick(e: MouseEvent) {
                 <span v-if="m.role === 'user'" style="font-size:11px;color:var(--text-faint)">保存后将从此重新生成</span>
               </div>
             </div>
-            <div v-else class="bubble" v-html="md(m.content)" @click="onBubbleClick"></div>
+            <template v-if="editingId !== m.id">
+              <div v-if="m.role === 'assistant' && m.reasoning && store.config?.show_reasoning" class="reasoning" :class="{ open: historyReasoningOpen[m.id] }">
+                <div class="reasoning-head" @click="toggleHistoryReasoning(m.id)">
+                  <span>💭 思考过程</span>
+                  <span class="reasoning-toggle">{{ historyReasoningOpen[m.id] ? '收起' : '展开' }}</span>
+                </div>
+                <div v-if="historyReasoningOpen[m.id]" class="reasoning-body" v-html="md(m.reasoning)"></div>
+              </div>
+              <div class="bubble" v-html="md(m.content)" @click="onBubbleClick"></div>
+            </template>
           </div>
         </div>
 

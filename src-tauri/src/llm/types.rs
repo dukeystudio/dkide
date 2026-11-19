@@ -21,7 +21,7 @@ pub enum StreamEvent {
     /// 用户取消生成
     Cancelled,
     /// 本轮回答结束
-    Done { content: String },
+    Done { content: String, reasoning: String },
     /// 出错
     Error { message: String },
 }

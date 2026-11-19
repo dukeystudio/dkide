@@ -60,19 +60,24 @@ impl<'a> ChatEngine<'a> {
         &self,
         history: &[Message],
         channel: &Channel<StreamEvent>,
-    ) -> Result<(String, UsageStats)> {
+    ) -> Result<(String, String, UsageStats)> {
         let messages = self.build_messages(history);
         let tools = self.build_tools();
         let price = if self.custom_price > 0.0 { self.custom_price } else { model_price(&self.provider.model) };
         let mut total_usage = UsageStats::default();
+        let mut all_reasoning = String::new();
 
         for _ in 0..MAX_TOOL_ROUNDS {
             if self.cancels.is_cancelled(self.session_id) {
                 let _ = channel.send(StreamEvent::Cancelled);
-                return Ok((String::new(), total_usage));
+                return Ok((String::new(), all_reasoning, total_usage));
             }
 
             let result = self.stream_once(&messages, &tools, channel).await?;
+            if !result.reasoning.is_empty() {
+                if !all_reasoning.is_empty() { all_reasoning.push('\n'); }
+                all_reasoning.push_str(&result.reasoning);
+            }
 
             let prompt = if result.prompt_tokens > 0 { result.prompt_tokens } else { UsageStats::estimate(&serde_json::to_string(&messages).unwrap_or_default()) };
             let completion = if result.completion_tokens > 0 { result.completion_tokens } else { UsageStats::estimate(&result.content) };
@@ -85,8 +90,8 @@ impl<'a> ChatEngine<'a> {
             logger::llm(format!("model={} prompt={} completion={}", self.provider.model, prompt, completion));
 
             if result.tool_calls.is_empty() {
-                let _ = channel.send(StreamEvent::Done { content: result.content.clone() });
-                return Ok((result.content, total_usage));
+                let _ = channel.send(StreamEvent::Done { content: result.content.clone(), reasoning: all_reasoning.clone() });
+                return Ok((result.content, all_reasoning, total_usage));
             }
 
             let wire_calls: Vec<WireToolCall> = result.tool_calls.iter().map(|c| WireToolCall {
@@ -105,7 +110,7 @@ impl<'a> ChatEngine<'a> {
             for call in &result.tool_calls {
                 if self.cancels.is_cancelled(self.session_id) {
                     let _ = channel.send(StreamEvent::Cancelled);
-                    return Ok((String::new(), total_usage));
+                    return Ok((String::new(), all_reasoning, total_usage));
                 }
                 let call_id = if call.id.is_empty() { format!("call_{}", call.index) } else { call.id.clone() };
                 let _ = channel.send(StreamEvent::Tool {
@@ -121,31 +126,36 @@ impl<'a> ChatEngine<'a> {
                     tool_call_id: Some(call_id),
                 });
             }
-            // 下一轮使用包含工具结果的上下文
-            return self.run_with_messages(&next, &tools, channel, total_usage, 1).await;
+            // 下一轮使用包含工具结果的上下文（携带已累积的思考过程）
+            return self.run_with_messages(&next, &tools, channel, total_usage, all_reasoning, 1).await;
         }
 
         let msg = "工具调用轮数超过上限，已停止。".to_string();
         let _ = channel.send(StreamEvent::Error { message: msg.clone() });
-        Ok((msg, total_usage))
+        Ok((msg, all_reasoning, total_usage))
     }
 
-    /// 递归处理后续工具轮次
+    /// 递归处理后续工具轮次（acc_reasoning 携带前序轮次累积的思考过程）
     fn run_with_messages<'b>(
         &'b self,
         messages: &'b [WireMessage],
         tools: &'b [ToolDefinition],
         channel: &'b Channel<StreamEvent>,
         mut total_usage: UsageStats,
+        mut acc_reasoning: String,
         round: usize,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(String, UsageStats)>> + Send + 'b>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(String, String, UsageStats)>> + Send + 'b>> {
         Box::pin(async move {
             if round >= MAX_TOOL_ROUNDS || self.cancels.is_cancelled(self.session_id) {
                 let _ = channel.send(StreamEvent::Cancelled);
-                return Ok((String::new(), total_usage));
+                return Ok((String::new(), acc_reasoning, total_usage));
             }
             let price = if self.custom_price > 0.0 { self.custom_price } else { model_price(&self.provider.model) };
             let result = self.stream_once(messages, tools, channel).await?;
+            if !result.reasoning.is_empty() {
+                if !acc_reasoning.is_empty() { acc_reasoning.push('\n'); }
+                acc_reasoning.push_str(&result.reasoning);
+            }
             let prompt = if result.prompt_tokens > 0 { result.prompt_tokens } else { UsageStats::estimate(&serde_json::to_string(messages).unwrap_or_default()) };
             let completion = if result.completion_tokens > 0 { result.completion_tokens } else { UsageStats::estimate(&result.content) };
             total_usage.add(prompt, completion, price);
@@ -156,8 +166,8 @@ impl<'a> ChatEngine<'a> {
             });
 
             if result.tool_calls.is_empty() {
-                let _ = channel.send(StreamEvent::Done { content: result.content.clone() });
-                return Ok((result.content, total_usage));
+                let _ = channel.send(StreamEvent::Done { content: result.content.clone(), reasoning: acc_reasoning.clone() });
+                return Ok((result.content, acc_reasoning, total_usage));
             }
 
             let mut next = messages.to_vec();
@@ -180,7 +190,7 @@ impl<'a> ChatEngine<'a> {
                     tool_calls: None, tool_call_id: Some(call_id),
                 });
             }
-            self.run_with_messages(&next, tools, channel, total_usage, round + 1).await
+            self.run_with_messages(&next, tools, channel, total_usage, acc_reasoning, round + 1).await
         })
     }
 

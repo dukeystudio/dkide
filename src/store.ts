@@ -216,6 +216,7 @@ export const useChatStore = defineStore('chat', () => {
               id: `local-a-${Date.now()}`,
               role: 'assistant',
               content: event.content,
+              reasoning: event.reasoning || streamReasoning.value[sid] || undefined,
               created_at: Math.floor(Date.now() / 1000),
             });
             break;

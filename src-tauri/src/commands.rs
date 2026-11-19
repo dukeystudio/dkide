@@ -292,13 +292,13 @@ pub async fn chat(
         enable_thinking, temperature, max_tokens,
     );
 
-    let (answer, usage) = engine.run(&history, &channel).await?;
+    let (answer, reasoning, usage) = engine.run(&history, &channel).await?;
     state.cancels.clear(&session_id);
 
     let mut sessions = state.sessions.lock().unwrap();
     if let Some(session) = sessions.iter_mut().find(|s| s.id == session_id) {
-        if !answer.is_empty() {
-            session.messages.push(Message::assistant(answer.clone()));
+        if !answer.is_empty() || !reasoning.trim().is_empty() {
+            session.messages.push(Message::assistant_with(answer.clone(), Some(reasoning)));
         }
         session.usage.add(usage.prompt_tokens, usage.completion_tokens, 0.0);
         session.usage.estimated_cost = usage.estimated_cost;

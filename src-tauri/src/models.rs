@@ -147,6 +147,9 @@ pub struct Message {
     pub id: String,
     pub role: Role,
     pub content: String,
+    /// 模型的思考过程（reasoning），模型不带时为空
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub reasoning: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -161,6 +164,7 @@ impl Message {
             id: uuid::Uuid::new_v4().to_string(),
             role: Role::User,
             content: content.into(),
+            reasoning: None,
             tool_calls: None,
             tool_call_id: None,
             created_at: chrono::Utc::now().timestamp(),
@@ -168,10 +172,16 @@ impl Message {
     }
 
     pub fn assistant(content: impl Into<String>) -> Self {
+        Self::assistant_with(content, None)
+    }
+
+    /// 带思考过程的助手消息（reasoning 为空则不存）
+    pub fn assistant_with(content: impl Into<String>, reasoning: Option<String>) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             role: Role::Assistant,
             content: content.into(),
+            reasoning: reasoning.filter(|r| !r.trim().is_empty()),
             tool_calls: None,
             tool_call_id: None,
             created_at: chrono::Utc::now().timestamp(),
