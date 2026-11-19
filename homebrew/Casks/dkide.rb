@@ -1,15 +1,14 @@
 cask "dkide" do
   version "1.0.0"
 
-  # 都客AI助手 (dkide) — Tauri 产物命名: "都客AI助手_<version>_<arch>.dmg"
-  # "都客AI助手" 的 URL 编码为 %E9%83%BD%E5%AE%A2AI%E5%8A%A9%E6%89%8B
+  # 都客AI助手 (dkide) — Release 资产统一使用 ASCII 名，避免中文名被 GitHub 改写
   on_arm do
-    url "https://github.com/dukeystudio/dkide/releases/download/v#{version}/%E9%83%BD%E5%AE%A2AI%E5%8A%A9%E6%89%8B_#{version}_aarch64.dmg"
-    sha256 "6a04d48e96e829c652b79911cbacfef2eb4bcbc37ee56c7875da223e0f5531f5"
+    url "https://github.com/dukeystudio/dkide/releases/download/v#{version}/dkide_#{version}_aarch64.dmg"
+    sha256 "d3c4bc557902b06214259d31d18026ef816e6e1a2e6c696cf3cc42ce886cffc7"
   end
   on_intel do
-    url "https://github.com/dukeystudio/dkide/releases/download/v#{version}/%E9%83%BD%E5%AE%A2AI%E5%8A%A9%E6%89%8B_#{version}_x64.dmg"
-    sha256 "REPLACE_WITH_X64_SHA256"
+    url "https://github.com/dukeystudio/dkide/releases/download/v#{version}/dkide_#{version}_x64.dmg"
+    sha256 "44075d1df992f0716c1f53fd8d4c11b482fc1dbf07ec653253e78d2067cfe050"
   end
 
   name "都客AI助手"

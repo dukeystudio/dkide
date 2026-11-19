@@ -72,12 +72,19 @@ jobs:
           path: artifacts
 
       - name: Prepare DMG paths
+        env:
+          VERSION: ${{ github.ref_name }}
         run: |
+          VERSION="${VERSION#v}"
           A=$(find artifacts/dmg-aarch64 -name '*.dmg' -type f | head -1)
           X=$(find artifacts/dmg-x64 -name '*.dmg' -type f | head -1)
           [ -n "$A" ] && [ -n "$X" ] || { echo "缺少 DMG 产物"; exit 1; }
-          echo "DMG_A=$A" >> "$GITHUB_ENV"
-          echo "DMG_X=$X" >> "$GITHUB_ENV"
+          # GitHub 对非 ASCII 文件名处理有问题，统一复制为 ASCII 名再上传
+          mkdir -p release-assets
+          cp "$A" "release-assets/dkide_${VERSION}_aarch64.dmg"
+          cp "$X" "release-assets/dkide_${VERSION}_x64.dmg"
+          echo "DMG_A=release-assets/dkide_${VERSION}_aarch64.dmg" >> "$GITHUB_ENV"
+          echo "DMG_X=release-assets/dkide_${VERSION}_x64.dmg" >> "$GITHUB_ENV"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -86,7 +93,7 @@ jobs:
             ${{ env.DMG_A }}
             ${{ env.DMG_X }}
           generate_release_notes: true
-          name: 都客AI助手 v${{ github.ref_name }}
+          name: 都客AI助手 ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
