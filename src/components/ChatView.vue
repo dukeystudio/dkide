@@ -43,9 +43,18 @@ const enabledSkills = computed(() => {
   return skills.skills.filter((s) => ids.has(s.dir_name) || s.enabled);
 });
 
-function scrollToBottom() {
+function scrollToBottom(force = false) {
   nextTick(() => {
-    if (messagesEl.value) messagesEl.value.scrollTop = messagesEl.value.scrollHeight;
+    const el = messagesEl.value;
+    if (!el) return;
+    // 非强制且用户已往上翻看（不在底部）时，不强行拉回，避免生成中跳屏
+    if (!force) {
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      if (!atBottom) return;
+    }
+    el.scrollTop = el.scrollHeight;
+    // 双保险：markdown/图片渲染可能还没撑满高度，再滚一次
+    requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
   });
 }
 
@@ -59,10 +68,18 @@ function onDocClick(e: MouseEvent) {
 onMounted(() => document.addEventListener('click', onDocClick));
 onUnmounted(() => document.removeEventListener('click', onDocClick));
 
+// 切换会话：强制滚到底（打开对话就停留在最后一条）
 watch(
-  () => [streamText.value, streamTools.value.length, session.value?.messages.length, store.currentId],
-  scrollToBottom
+  () => store.currentId,
+  () => scrollToBottom(true)
 );
+// 生成增量：贴底才跟随，不强制
+watch(
+  () => [streamText.value, streamTools.value.length, session.value?.messages.length],
+  () => scrollToBottom(false)
+);
+// 挂载即滚到底
+onMounted(() => scrollToBottom(true));
 
 function md(content: string) { return renderMarkdown(content); }
 
