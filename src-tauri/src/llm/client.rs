@@ -279,7 +279,7 @@ impl<'a> ChatEngine<'a> {
     fn system_prompt(&self) -> String {
         let mut prompt = self.system_prompt.to_string();
         prompt.push_str(&format!(
-            "\n\n## 工作环境\n文件工具的工作目录为: {}\n你可以使用 read_file / write_file / list_files / run_command 工具。危险操作会请求用户批准。\n\n## 机检（静态检查）约定\n做代码检查/静态分析时优先走 Rust 工具链：cargo clippy（lint）、cargo check（编译检查）、cargo test（测试）。不要默认用 Python 做机检；仅当目标代码本身是 Python 项目时才用相应工具（ruff/pylint 等）。\n",
+            "\n\n## 工作环境\n文件工具的工作目录为: {}\n你可以使用 read_file / write_file / list_files / run_command 工具。危险操作会请求用户批准。\n\n## 机检（静态检查）约定\n做代码检查/静态分析只走 Rust 工具链：cargo clippy（lint）、cargo check（编译检查）、cargo test（测试）。禁止使用 Python（python/python3）执行机检或任何脚本任务；通用命令优先用 grep/ripgrep/awk 或系统原生工具。\n",
             self.tool_ctx.workspace.display()
         ));
         if !self.skills.is_empty() {

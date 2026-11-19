@@ -120,7 +120,54 @@ fn is_blocked_command(command: &str) -> Option<&'static str> {
             return Some(reason);
         }
     }
+    if uses_python_interpreter(&c) {
+        return Some("已禁用 Python：请使用 Rust 工具链（cargo clippy/check/test）或系统原生命令");
+    }
     None
+}
+
+/// 判断命令是否把 python 当作解释器调用（在某个命令段的开头），
+/// 而非常规参数（如 grep 后跟文本 "python" 不会命中）。
+fn uses_python_interpreter(lower: &str) -> bool {
+    for seg in split_command_segments(lower) {
+        // 段开头的第一个词才是被调用的命令（后面是参数）。
+        let first = seg.split_whitespace().next().unwrap_or("");
+        // 去掉路径前缀只看命令名本身，覆盖 /usr/bin/python、./venv/bin/python
+        let base = first.rsplit('/').next().unwrap_or(first);
+        for name in ["python3", "python2", "python"] {
+            if base == name
+                || (base.starts_with(name) && base.as_bytes().get(name.len()) == Some(&b'.'))
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// 把 shell 命令切成"命令段"：每个段以 行首 / | / && / || / ; 之后开始。
+fn split_command_segments(lower: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut i = 0;
+    let bytes = lower.as_bytes();
+    let flush = |out: &mut Vec<String>, cur: &mut String| {
+        let s = cur.trim().to_string();
+        if !s.is_empty() { out.push(s); }
+        cur.clear();
+    };
+    while i < bytes.len() {
+        if lower[i..].starts_with("&&") || lower[i..].starts_with("||") || bytes[i] == b';' || bytes[i] == b'|' {
+            flush(&mut out, &mut cur);
+            let len = if lower[i..].starts_with("&&") || lower[i..].starts_with("||") { 2 } else { 1 };
+            i += len;
+        } else {
+            cur.push(lower[i..i + 1].chars().next().unwrap());
+            i += 1;
+        }
+    }
+    flush(&mut out, &mut cur);
+    out
 }
 
 /// 执行内置工具，返回要回填给模型的文本结果。
@@ -300,5 +347,19 @@ mod tests {
         assert!(is_blocked_command("rm -rf /").is_some());
         assert!(is_blocked_command("sudo rm -rf /var").is_some());
         assert!(is_blocked_command("ls -la").is_none());
+    }
+
+    #[test]
+    fn blocks_python_interpreter() {
+        // 作为解释器调用 → 拦截
+        assert!(is_blocked_command("python3 script.py").is_some());
+        assert!(is_blocked_command("python script.py").is_some());
+        assert!(is_blocked_command("python3.11 script.py").is_some());
+        assert!(is_blocked_command("cargo test && python3 analyze.py").is_some());
+        assert!(is_blocked_command("echo hi | python3").is_some());
+        // 非常规参数 → 不拦
+        assert!(is_blocked_command("grep python src/main.rs").is_none());
+        assert!(is_blocked_command("ls python-files").is_none());
+        assert!(is_blocked_command("cargo clippy").is_none());
     }
 }
