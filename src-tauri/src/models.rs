@@ -85,10 +85,23 @@ pub struct AppConfig {
     /// 历史上下文 token 预算
     #[serde(default = "default_token_budget")]
     pub token_budget: usize,
+    /// 思考开关：None=模型默认，false=关闭，true=开启。对标 opencode reasoning
+    #[serde(default)]
+    pub enable_thinking: Option<bool>,
+    /// 是否在对话中展示思考过程（前端展示开关，默认展示）
+    #[serde(default = "default_show_reasoning")]
+    pub show_reasoning: bool,
+    /// 温度（可选，None 用模型默认）
+    #[serde(default)]
+    pub temperature: Option<f64>,
+    /// 最大输出 token（可选）
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
 }
 
 fn default_version() -> u32 { crate::config::CONFIG_VERSION }
 fn default_token_budget() -> usize { 24000 }
+fn default_show_reasoning() -> bool { true }
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -105,6 +118,10 @@ impl Default for AppConfig {
             marketplace_url: String::new(),
             cost_per_million: 0.0,
             token_budget: default_token_budget(),
+            enable_thinking: None,
+            temperature: None,
+            max_tokens: None,
+            show_reasoning: true,
         }
     }
 }

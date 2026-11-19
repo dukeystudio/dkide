@@ -23,8 +23,11 @@ const skillMenuOpen = ref(false);
 const session = computed(() => store.currentSession);
 const streaming = computed(() => session.value ? store.isStreaming(session.value.id) : false);
 const streamText = computed(() => session.value ? store.textFor(session.value.id) : '');
+const streamReasoning = computed(() => session.value ? store.reasoningFor(session.value.id) : '');
 const streamTools = computed(() => session.value ? store.toolsFor(session.value.id) : []);
 const streamUsage = computed(() => session.value ? store.usageFor(session.value.id) : null);
+// 思考过程：生成中默认展开，生成完折叠（可手动点开）
+const reasoningOpen = ref(true);
 const renderedProvider = computed(() =>
   props.provider ? `${props.provider.name} · ${props.provider.model}` : '未配置模型'
 );
@@ -179,6 +182,13 @@ async function onBubbleClick(e: MouseEvent) {
           <div class="msg-avatar">AI</div>
           <div class="msg-body">
             <div class="msg-name">助手 <span style="font-size:11px;color:var(--text-faint)">生成中…</span></div>
+            <div v-if="streamReasoning && store.config?.show_reasoning" class="reasoning" :class="{ open: reasoningOpen }">
+              <div class="reasoning-head" @click="reasoningOpen = !reasoningOpen">
+                <span>💭 思考过程</span>
+                <span class="reasoning-toggle">{{ reasoningOpen ? '收起' : '展开' }}</span>
+              </div>
+              <div v-if="reasoningOpen" class="reasoning-body" v-html="md(streamReasoning)"></div>
+            </div>
             <div v-for="(t, ti) in streamTools" :key="ti" class="tool-call">
               <div class="tool-call-head" @click="toggleTool(ti)">
                 <span>{{ toolIcon(t.name) }}</span>

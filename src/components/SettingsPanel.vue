@@ -81,6 +81,12 @@ async function pickWorkspace() {
   const path = await open({ directory: true, multiple: false });
   if (path && typeof path === 'string') config.value.workspace_path = path;
 }
+
+/** 思考开关：空串=模型默认(null)，true/false 强制 */
+function setThinking(v: string) {
+  if (!config.value) return;
+  config.value.enable_thinking = v === '' ? null : v === 'true';
+}
 </script>
 
 <template>
@@ -130,6 +136,35 @@ async function pickWorkspace() {
           <div style="display:flex;gap:8px;">
             <input v-model="config.workspace_path" placeholder="留空使用应用数据目录" class="inline-input" />
             <button class="btn" @click="pickWorkspace">选择…</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">高级生成参数</div>
+          <div class="row">
+            <div class="field">
+              <label>思考过程</label>
+              <select :value="config.enable_thinking === null ? '' : String(config.enable_thinking)"
+                @change="setThinking(($event.target as HTMLSelectElement).value)">
+                <option value="">模型默认</option>
+                <option value="true">强制开启</option>
+                <option value="false">关闭思考</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>温度（创造力，0-2）</label>
+              <input v-model.number="config.temperature" type="number" min="0" max="2" step="0.1" placeholder="默认" />
+            </div>
+            <div class="field">
+              <label>最大输出 token</label>
+              <input v-model.number="config.max_tokens" type="number" min="0" step="512" placeholder="默认" />
+            </div>
+          </div>
+          <div class="field">
+            <label class="toggle-label">
+              <input type="checkbox" v-model="config.show_reasoning" />
+              在对话中显示 AI 的思考过程（可折叠）
+            </label>
           </div>
         </div>
 

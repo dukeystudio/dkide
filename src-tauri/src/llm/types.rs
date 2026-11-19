@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 pub enum StreamEvent {
     /// 模型输出的文本增量
     Delta { text: String },
+    /// 模型的思考过程增量（reasoning）
+    Reasoning { text: String },
     /// 开始执行某个工具（技能）
     Tool { name: String, args: String },
     /// 工具执行结果
@@ -29,6 +31,15 @@ pub struct ChatRequest {
     pub stream: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
+    /// 思考开关/强度（可选）。None 用模型默认；false 关闭；"low"/"xhigh" 等档位
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enable_thinking: Option<bool>,
+    /// 温度（可选）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    /// 最大输出 token（可选）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -93,6 +104,9 @@ struct Choice {
 #[derive(Debug, Deserialize, Default)]
 struct Delta {
     content: Option<String>,
+    /// 思考/推理过程（OpenAI 兼容 reasoning 字段）
+    #[serde(default)]
+    reasoning_content: Option<String>,
     tool_calls: Option<Vec<DeltaToolCall>>,
 }
 
@@ -116,9 +130,17 @@ struct DeltaFunction {
 #[derive(Debug, Default)]
 pub struct StreamResult {
     pub content: String,
+    /// 累积的思考过程文本（可选，模型不带 reasoning 时为空）
+    pub reasoning: String,
     pub tool_calls: Vec<AccumToolCall>,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
+}
+
+/// 本块解析出的一个文本增量（正文 or 思考过程）
+pub enum SsePiece {
+    Text(String),
+    Reasoning(String),
 }
 
 #[derive(Debug, Default, Clone)]
@@ -129,12 +151,12 @@ pub struct AccumToolCall {
     pub arguments: String,
 }
 
-/// 逐块解析 SSE 数据，返回本块产生的文本增量，并累积工具调用。
+/// 逐块解析 SSE 数据，返回本块产生的文本/思考增量，并累积工具调用。
 pub fn consume_sse_buffer(
     buffer: &mut String,
     result: &mut StreamResult,
-) -> Vec<String> {
-    let mut texts = Vec::new();
+) -> Vec<SsePiece> {
+    let mut pieces = Vec::new();
     while let Some(pos) = buffer.find("\n\n") {
         let raw: String = buffer.drain(..=pos + 1).collect();
         for line in raw.lines() {
@@ -155,10 +177,16 @@ pub fn consume_sse_buffer(
             }
             for choice in &chunk.choices {
                 let delta = &choice.delta;
+                if let Some(ref reasoning) = delta.reasoning_content {
+                    if !reasoning.is_empty() {
+                        result.reasoning.push_str(reasoning);
+                        pieces.push(SsePiece::Reasoning(reasoning.clone()));
+                    }
+                }
                 if let Some(ref text) = delta.content {
                     if !text.is_empty() {
                         result.content.push_str(text);
-                        texts.push(text.clone());
+                        pieces.push(SsePiece::Text(text.clone()));
                     }
                 }
                 if let Some(ref calls) = delta.tool_calls {
@@ -191,7 +219,7 @@ pub fn consume_sse_buffer(
             }
         }
     }
-    texts
+    pieces
 }
 
 #[cfg(test)]
@@ -204,9 +232,21 @@ mod tests {
         let mut result = StreamResult::default();
         buffer.push_str("data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n");
         buffer.push_str("data: {\"choices\":[{\"delta\":{\"content\":\"好\"}}]}\n\n");
-        let texts = consume_sse_buffer(&mut buffer, &mut result);
-        assert_eq!(texts, vec!["你", "好"]);
+        let pieces = consume_sse_buffer(&mut buffer, &mut result);
+        assert_eq!(pieces, vec![SsePiece::Text("你".into()), SsePiece::Text("好".into())]);
         assert_eq!(result.content, "你好");
+    }
+
+    #[test]
+    fn parses_reasoning_deltas() {
+        let mut buffer = String::new();
+        let mut result = StreamResult::default();
+        buffer.push_str("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"想\"}}]}\n\n");
+        buffer.push_str("data: {\"choices\":[{\"delta\":{\"content\":\"答\"}}]}\n\n");
+        let pieces = consume_sse_buffer(&mut buffer, &mut result);
+        assert_eq!(pieces, vec![SsePiece::Reasoning("想".into()), SsePiece::Text("答".into())]);
+        assert_eq!(result.reasoning, "想");
+        assert_eq!(result.content, "答");
     }
 
     #[test]

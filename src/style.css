@@ -183,6 +183,13 @@ a { color: var(--primary); }
 .code-wrap:hover .copy-code { opacity: 1; }
 .copy-code:hover { background: rgba(255,255,255,.2); }
 
+/* 思考过程区块（对标 Claude thinking） */
+.reasoning { border: 1px solid var(--border); border-left: 3px solid var(--primary); border-radius: 8px; margin-bottom: 10px; font-size: 12px; background: var(--bg-subtle); }
+.reasoning-head { display: flex; align-items: center; gap: 8px; padding: 7px 11px; cursor: pointer; color: var(--text-muted); font-weight: 600; }
+.reasoning-head:hover { background: var(--bg-hover); }
+.reasoning-toggle { margin-left: auto; font-size: 11px; font-weight: 400; color: var(--text-faint); }
+.reasoning-body { padding: 8px 12px; border-top: 1px dashed var(--border); color: var(--text-muted); font-family: monospace; font-size: 11px; white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow-y: auto; }
+.reasoning-body :deep(p) { margin: 0 0 6px; }
 .tool-call { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; overflow: hidden; font-size: 12px; }
 .tool-call-head { display: flex; align-items: center; gap: 8px; padding: 7px 11px; background: var(--warn-bg); color: var(--warn-text); cursor: pointer; }
 .tool-call-head .tool-status { font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(0,0,0,.08); }
@@ -254,6 +261,8 @@ a { color: var(--primary); }
 .btn-sm { padding: 5px 10px; font-size: 12px; }
 .provider-item { border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 12px; }
 .provider-item.active { border-color: var(--primary); background: var(--primary-soft); }
+.toggle-label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.toggle-label input { width: 16px; height: 16px; accent-color: var(--primary); }
 .apply-link { color: var(--primary); font-size: 12px; text-decoration: none; }
 .apply-link:hover { text-decoration: underline; }
 .preset-group { margin-bottom: 18px; }

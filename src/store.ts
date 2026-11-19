@@ -16,6 +16,7 @@ export const useChatStore = defineStore('chat', () => {
   // 按会话隔离的流式状态
   const streamingIds = ref<Set<string>>(new Set());
   const streamText = ref<Record<string, string>>({});
+  const streamReasoning = ref<Record<string, string>>({});
   const streamTools = ref<Record<string, ToolCallView[]>>({});
   const streamUsage = ref<Record<string, UsageStats>>({});
 
@@ -38,6 +39,7 @@ export const useChatStore = defineStore('chat', () => {
 
   function isStreaming(id: string) { return streamingIds.value.has(id); }
   function textFor(id: string) { return streamText.value[id] ?? ''; }
+  function reasoningFor(id: string) { return streamReasoning.value[id] ?? ''; }
   function toolsFor(id: string) { return streamTools.value[id] ?? []; }
   function usageFor(id: string) { return streamUsage.value[id] ?? null; }
 
@@ -146,6 +148,7 @@ export const useChatStore = defineStore('chat', () => {
     const sid = session.id;
     streamingIds.value = new Set([...streamingIds.value, sid]);
     streamText.value[sid] = '';
+    streamReasoning.value[sid] = '';
     streamTools.value[sid] = [];
     streamUsage.value[sid] = {
       prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, requests: 0, estimated_cost: 0,
@@ -157,6 +160,9 @@ export const useChatStore = defineStore('chat', () => {
         switch (event.type) {
           case 'delta':
             streamText.value[sid] = (streamText.value[sid] || '') + event.text;
+            break;
+          case 'reasoning':
+            streamReasoning.value[sid] = (streamReasoning.value[sid] || '') + event.text;
             break;
           case 'tool':
             streamTools.value[sid] = [
@@ -216,6 +222,7 @@ export const useChatStore = defineStore('chat', () => {
       next.delete(sid);
       streamingIds.value = next;
       delete streamText.value[sid];
+      delete streamReasoning.value[sid];
       delete streamTools.value[sid];
       delete streamUsage.value[sid];
     }
@@ -264,7 +271,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     sessions, currentId, currentSession, filteredSessions, config, error, searchQuery, providerRequired,
     streamingIds, totalUsage, pendingApprovals,
-    isStreaming, textFor, toolsFor, usageFor,
+    isStreaming, textFor, reasoningFor, toolsFor, usageFor,
     init, newSession, selectSession, deleteSession, renameSession, togglePin,
     deleteMessage, refreshUsage, send, cancel, regenerate, editMessage, saveConfig,
     respondApproval,

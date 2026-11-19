@@ -18,6 +18,14 @@ export interface AppConfig {
   marketplace_url: string;
   cost_per_million: number;
   token_budget: number;
+  /** 思考开关：null=模型默认，true/false 强制 */
+  enable_thinking: boolean | null;
+  /** 是否在对话中展示思考过程（前端展示开关） */
+  show_reasoning: boolean;
+  /** 温度（null 用模型默认） */
+  temperature: number | null;
+  /** 最大输出 token（null 用模型默认） */
+  max_tokens: number | null;
 }
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
@@ -106,6 +114,7 @@ export interface ToolCallView {
 
 export type StreamEvent =
   | { type: 'delta'; text: string }
+  | { type: 'reasoning'; text: string }
   | { type: 'tool'; name: string; args: string }
   | { type: 'tool_result'; name: string; result: string }
   | { type: 'approval_required'; id: string; tool: string; summary: string }

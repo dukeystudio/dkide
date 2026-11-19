@@ -27,6 +27,9 @@ pub struct ChatEngine<'a> {
     http: &'a reqwest::Client,
     token_budget: usize,
     custom_price: f64,
+    enable_thinking: Option<bool>,
+    temperature: Option<f64>,
+    max_tokens: Option<u32>,
 }
 
 impl<'a> ChatEngine<'a> {
@@ -42,10 +45,14 @@ impl<'a> ChatEngine<'a> {
         http: &'a reqwest::Client,
         token_budget: usize,
         custom_price: f64,
+        enable_thinking: Option<bool>,
+        temperature: Option<f64>,
+        max_tokens: Option<u32>,
     ) -> Self {
         Self {
             provider, system_prompt, skills, skill_instructions, tool_ctx,
             cancels, session_id, http, token_budget, custom_price,
+            enable_thinking, temperature, max_tokens,
         }
     }
 
@@ -189,6 +196,9 @@ impl<'a> ChatEngine<'a> {
             messages: messages.to_vec(),
             stream: true,
             tools: tools.to_vec(),
+            enable_thinking: self.enable_thinking,
+            temperature: self.temperature,
+            max_tokens: self.max_tokens,
         };
         let response = self.http
             .post(&url)
@@ -214,8 +224,15 @@ impl<'a> ChatEngine<'a> {
             }
             let chunk = chunk?;
             buffer.push_str(&String::from_utf8_lossy(&chunk));
-            for text in consume_sse_buffer(&mut buffer, &mut result) {
-                let _ = channel.send(StreamEvent::Delta { text });
+            for piece in consume_sse_buffer(&mut buffer, &mut result) {
+                match piece {
+                    crate::llm::types::SsePiece::Text(t) => {
+                        let _ = channel.send(StreamEvent::Delta { text: t });
+                    }
+                    crate::llm::types::SsePiece::Reasoning(t) => {
+                        let _ = channel.send(StreamEvent::Reasoning { text: t });
+                    }
+                }
             }
         }
         Ok(result)

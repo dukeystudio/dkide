@@ -211,13 +211,15 @@ pub async fn chat(
     let provider = active_provider(&state)?;
     state.cancels.clear(&session_id);
 
-    let (history, system_prompt, enabled_skills, workspace_path, token_budget, custom_price) = {
+    let (history, system_prompt, enabled_skills, workspace_path, token_budget, custom_price,
+        enable_thinking, temperature, max_tokens) = {
         let config = state.config.lock().unwrap();
         let sessions = state.sessions.lock().unwrap();
         let history = sessions.iter().find(|s| s.id == session_id)
             .map(|s| s.messages.clone()).unwrap_or_default();
         (history, config.system_prompt.clone(), config.enabled_skills.clone(),
-         config.workspace_path.clone(), config.token_budget, config.cost_per_million)
+         config.workspace_path.clone(), config.token_budget, config.cost_per_million,
+         config.enable_thinking, config.temperature, config.max_tokens)
     };
 
     let workspace = if workspace_path.trim().is_empty() {
@@ -251,6 +253,7 @@ pub async fn chat(
     let engine = ChatEngine::new(
         &provider, &system_prompt, &skill_summaries, &skill_instructions,
         &tool_ctx, &state.cancels, &session_id, &state.http, token_budget, custom_price,
+        enable_thinking, temperature, max_tokens,
     );
 
     let (answer, usage) = engine.run(&history, &channel).await?;
