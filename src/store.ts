@@ -284,13 +284,30 @@ export const useChatStore = defineStore('chat', () => {
     await send(userContent);
   }
 
-  async function editMessage(messageId: string, newContent: string) {
+  /**
+   * 编辑某条用户消息并重新生成（对标 ChatGPT/Claude 编辑历史）。
+   * 保存修改 → 删除该用户消息之后的所有回复 → 基于新内容重新生成。
+   * onlyUpdate=true 时只保存不重新生成。
+   */
+  async function editMessage(messageId: string, newContent: string, onlyUpdate = false) {
     const session = currentSession.value;
-    if (!session) return;
+    if (!session || isStreaming(session.id)) return;
     const idx = session.messages.findIndex((m) => m.id === messageId);
     if (idx < 0) return;
     session.messages[idx].content = newContent;
     await api.updateMessage(session.id, messageId, newContent);
+    if (onlyUpdate) return;
+
+    // 删除该用户消息之后的所有回复（保留这条被改的用户消息）
+    const after = session.messages.slice(idx + 1);
+    for (const m of after) await api.deleteMessage(session.id, m.id);
+    session.messages = session.messages.slice(0, idx + 1);
+
+    // 重新生成：去掉这条用户消息再 send，send() 会把它作为新消息追加并流式生成
+    const before = session.messages.slice(0, idx);
+    for (const m of before) { /* 保留不动 */ }
+    session.messages = before;
+    await send(newContent);
   }
 
   async function saveConfig(next: AppConfig) {

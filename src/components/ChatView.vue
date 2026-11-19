@@ -123,8 +123,8 @@ async function copyMessage(m: Message) {
 }
 
 function startEdit(m: Message) { editingId.value = m.id; editContent.value = m.content; }
-async function saveEdit(m: Message) {
-  await store.editMessage(m.id, editContent.value);
+async function saveEdit(m: Message, onlyUpdate = false) {
+  await store.editMessage(m.id, editContent.value, onlyUpdate);
   editingId.value = null;
 }
 
@@ -211,9 +211,11 @@ async function onBubbleClick(e: MouseEvent) {
             </div>
             <div v-if="editingId === m.id" class="edit-box">
               <textarea v-model="editContent" class="inline-input" style="min-height:80px;"></textarea>
-              <div style="display:flex;gap:8px;margin-top:6px;">
-                <button class="btn btn-sm btn-primary" @click="saveEdit(m)">保存</button>
+              <div style="display:flex;gap:8px;margin-top:6px;align-items:center;">
+                <button v-if="m.role === 'user'" class="btn btn-sm btn-primary" @click="saveEdit(m)">保存并继续</button>
+                <button v-else class="btn btn-sm btn-primary" @click="saveEdit(m, true)">保存</button>
                 <button class="btn btn-sm" @click="editingId = null">取消</button>
+                <span v-if="m.role === 'user'" style="font-size:11px;color:var(--text-faint)">保存后将从此重新生成</span>
               </div>
             </div>
             <div v-else class="bubble" v-html="md(m.content)" @click="onBubbleClick"></div>
