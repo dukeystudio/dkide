@@ -1,15 +1,9 @@
 cask "dkide" do
-  version "1.0.0"
+  version "1.1.0"
 
-  # 都客AI助手 (dkide) — Release 资产统一使用 ASCII 名，避免中文名被 GitHub 改写
-  on_arm do
-    url "https://github.com/dukeystudio/dkide/releases/download/v#{version}/dkide_#{version}_aarch64.dmg"
-    sha256 "d3c4bc557902b06214259d31d18026ef816e6e1a2e6c696cf3cc42ce886cffc7"
-  end
-  on_intel do
-    url "https://github.com/dukeystudio/dkide/releases/download/v#{version}/dkide_#{version}_x64.dmg"
-    sha256 "44075d1df992f0716c1f53fd8d4c11b482fc1dbf07ec653253e78d2067cfe050"
-  end
+  # 仅提供 arm64 (Apple Silicon) 版本
+  url "https://github.com/dukeystudio/dkide/releases/download/v#{version}/dkide_#{version}_aarch64.dmg"
+  sha256 "REPLACE_WITH_AARCH64_SHA256"
 
   name "都客AI助手"
   name "dkide"

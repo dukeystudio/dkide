@@ -9,18 +9,10 @@ permissions:
   contents: write
 
 jobs:
-  # 分别在两个架构的 macOS runner 上构建 DMG
+  # 仅在 Apple Silicon runner 上构建 arm64 DMG
   build:
-    name: Build DMG (${{ matrix.arch }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest      # Apple Silicon (arm64) — macos-latest 现为 arm64
-            arch: aarch64
-          - os: macos-15-intel    # Intel (x86_64)
-            arch: x64
-    runs-on: ${{ matrix.os }}
+    name: Build DMG (aarch64)
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -55,7 +47,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmg-${{ matrix.arch }}
+          name: dmg-aarch64
           path: ${{ env.DMG_PATH }}
           if-no-files-found: error
 
@@ -77,21 +69,17 @@ jobs:
         run: |
           VERSION="${VERSION#v}"
           A=$(find artifacts/dmg-aarch64 -name '*.dmg' -type f | head -1)
-          X=$(find artifacts/dmg-x64 -name '*.dmg' -type f | head -1)
-          [ -n "$A" ] && [ -n "$X" ] || { echo "缺少 DMG 产物"; exit 1; }
+          [ -n "$A" ] || { echo "缺少 DMG 产物"; exit 1; }
           # GitHub 对非 ASCII 文件名处理有问题，统一复制为 ASCII 名再上传
           mkdir -p release-assets
           cp "$A" "release-assets/dkide_${VERSION}_aarch64.dmg"
-          cp "$X" "release-assets/dkide_${VERSION}_x64.dmg"
           echo "DMG_A=release-assets/dkide_${VERSION}_aarch64.dmg" >> "$GITHUB_ENV"
-          echo "DMG_X=release-assets/dkide_${VERSION}_x64.dmg" >> "$GITHUB_ENV"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             ${{ env.DMG_A }}
-            ${{ env.DMG_X }}
           generate_release_notes: true
           name: 都客AI助手 ${{ github.ref_name }}
         env:
@@ -109,26 +97,17 @@ jobs:
           BASE="https://github.com/${REPO}/releases/download/v${VERSION}"
 
           SHA_A=$(sha256sum "$DMG_A" | cut -d' ' -f1)
-          SHA_X=$(sha256sum "$DMG_X" | cut -d' ' -f1)
           NAME_A=$(basename "$DMG_A")
-          NAME_X=$(basename "$DMG_X")
           enc() { python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$1"; }
           ENC_A=$(enc "$NAME_A")
-          ENC_X=$(enc "$NAME_X")
 
           mkdir -p tap/Casks
           cat > tap/Casks/dkide.rb <<EOF
           cask "dkide" do
             version "$VERSION"
 
-            on_arm do
-              url "$BASE/$ENC_A"
-              sha256 "$SHA_A"
-            end
-            on_intel do
-              url "$BASE/$ENC_X"
-              sha256 "$SHA_X"
-            end
+            url "$BASE/$ENC_A"
+            sha256 "$SHA_A"
 
             name "都客AI助手"
             name "dkide"

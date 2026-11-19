@@ -11,18 +11,18 @@ brew install --cask dkide
 
 ## 自动发布（推荐）
 
-推送 `v*` tag 即触发 `.github/workflows/release.yml`，自动完成：双架构构建 → 创建 GitHub Release → 生成 Cask → 推送 tap 仓库。
+推送 `v*` tag 即触发 `.github/workflows/release.yml`，自动完成：arm64 构建 → 创建 GitHub Release → 生成 Cask → 推送 tap 仓库。当前仅发布 Apple Silicon (arm64) 版本。
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 ### 前置配置
 
 1. **TAP_TOKEN**（可选）：在仓库 Settings → Secrets → Actions 新建 `TAP_TOKEN`，填入一个有 `dukeystudio/homebrew-tap` 仓库写权限的 Personal Access Token（fine-grained token 仅需该仓库 Contents 读写）。不配置则跳过自动推送 tap，工作流仍会构建 DMG 并创建 Release，Cask 需手动更新。
 2. `GITHUB_TOKEN` 由 Actions 自动提供，用于创建 Release 和上传资产。
-3. 工作流使用 `macos-latest`（arm64）与 `macos-15-intel`（Intel）两个 runner。若标签变更，到 GitHub 官方文档核对当前可用的 macOS runner 标签并替换。
+3. 工作流使用 `macos-latest`（arm64）单个 runner，仅构建 Apple Silicon 版本。若标签变更，到 GitHub 官方文档核对当前可用的 macOS runner 标签并替换。
 
 工作流会从 tag 名（去掉 `v`）自动同步 `package.json`、`tauri.conf.json`、`Cargo.toml` 的版本号，无需手动改版本。
 
