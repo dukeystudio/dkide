@@ -3,7 +3,7 @@ cask "dkide" do
 
   # 仅提供 arm64 (Apple Silicon) 版本
   url "https://github.com/dukeystudio/dkide/releases/download/v#{version}/dkide_#{version}_aarch64.dmg"
-  sha256 "REPLACE_WITH_AARCH64_SHA256"
+  sha256 "0ccef2187be9f22a1320747fd08c01482d76f88ed435d2365e9dd7435f762ab9"
 
   name "都客AI助手"
   name "dkide"
