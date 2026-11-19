@@ -38,8 +38,8 @@ function md(content: string) { return renderMarkdown(content); }
 async function send() {
   const text = input.value.trim();
   if (!text || streaming.value) return;
-  input.value = '';
-  await store.send(text);
+  const ok = await store.send(text);
+  if (ok) input.value = '';
   scrollToBottom();
 }
 

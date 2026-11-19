@@ -3,12 +3,13 @@ use std::path::PathBuf;
 use crate::config;
 use crate::error::{AppError, Result};
 use crate::logger;
-use crate::models::{AppConfig, Session};
+use crate::models::{AppConfig, AuthSession, Session};
 
 pub struct Store {
     pub dir: PathBuf,
     config_path: PathBuf,
     sessions_path: PathBuf,
+    auth_path: PathBuf,
 }
 
 impl Store {
@@ -16,6 +17,7 @@ impl Store {
         Self {
             config_path: dir.join("config.json"),
             sessions_path: dir.join("sessions.json"),
+            auth_path: dir.join("auth.json"),
             dir,
         }
     }
@@ -73,6 +75,29 @@ impl Store {
 
     pub fn skills_dir(&self) -> PathBuf {
         self.dir.join("skills")
+    }
+
+    pub fn load_auth(&self) -> Result<Option<AuthSession>> {
+        if !self.auth_path.exists() {
+            return Ok(None);
+        }
+        let text = std::fs::read_to_string(&self.auth_path)?;
+        serde_json::from_str(&text).map(Some).map_err(|e| {
+            logger::error(format!("会话文件解析失败: {}", e));
+            AppError(format!("会话文件解析失败: {}", e))
+        })
+    }
+
+    pub fn save_auth(&self, auth: &AuthSession) -> Result<()> {
+        let text = serde_json::to_string_pretty(auth)?;
+        atomic_write(&self.auth_path, &text)
+    }
+
+    pub fn clear_auth(&self) -> Result<()> {
+        if self.auth_path.exists() {
+            std::fs::remove_file(&self.auth_path)?;
+        }
+        Ok(())
     }
 }
 

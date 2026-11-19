@@ -84,6 +84,19 @@ export interface Approval {
   summary: string;
 }
 
+export interface AuthSession {
+  account: string;
+  login_at: number;
+  coin: number;
+  expire_display: string;
+}
+
+export interface UserQuota {
+  coin: number;
+  expire_display: string;
+  is_member: boolean;
+}
+
 export interface ToolCallView {
   name: string;
   args: string;

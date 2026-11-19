@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { api } from './api';
 import { useSkillsStore } from './skillsStore';
+import { useAuthStore } from './authStore';
 import type { AppConfig, Approval, Message, Session, StreamEvent, ToolCallView, UsageStats } from './types';
 
 export const useChatStore = defineStore('chat', () => {
@@ -10,6 +11,7 @@ export const useChatStore = defineStore('chat', () => {
   const config = ref<AppConfig | null>(null);
   const error = ref('');
   const searchQuery = ref('');
+  const providerRequired = ref(false);
 
   // 按会话隔离的流式状态
   const streamingIds = ref<Set<string>>(new Set());
@@ -112,9 +114,19 @@ export const useChatStore = defineStore('chat', () => {
     totalUsage.value = await api.getTotalUsage();
   }
 
-  async function send(content: string) {
+  function requireProvider(): boolean {
+    if (config.value?.providers.some((p) => p.api_key)) return true;
+    providerRequired.value = true;
+    return false;
+  }
+
+  async function send(content: string): Promise<boolean> {
     const session = currentSession.value;
-    if (!session || isStreaming(session.id) || !content.trim()) return;
+    if (!session || isStreaming(session.id) || !content.trim()) return false;
+
+    const auth = useAuthStore();
+    if (!auth.requireLogin('登录后才能开始对话')) return false;
+    if (!requireProvider()) return false;
 
     const userMsg: Message = {
       id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -204,6 +216,7 @@ export const useChatStore = defineStore('chat', () => {
       delete streamTools.value[sid];
       delete streamUsage.value[sid];
     }
+    return true;
   }
 
   async function cancel(sid: string) {
@@ -213,6 +226,9 @@ export const useChatStore = defineStore('chat', () => {
   async function regenerate(messageIndex: number) {
     const session = currentSession.value;
     if (!session || isStreaming(session.id)) return;
+    const auth = useAuthStore();
+    if (!auth.requireLogin('登录后才能重新生成')) return;
+    if (!requireProvider()) return;
     // 找到该助手消息之前最近的用户消息及其位置
     let userIdx = -1;
     for (let i = messageIndex - 1; i >= 0; i--) {
@@ -243,7 +259,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   return {
-    sessions, currentId, currentSession, filteredSessions, config, error, searchQuery,
+    sessions, currentId, currentSession, filteredSessions, config, error, searchQuery, providerRequired,
     streamingIds, totalUsage, pendingApprovals,
     isStreaming, textFor, toolsFor, usageFor,
     init, newSession, selectSession, deleteSession, renameSession, togglePin,

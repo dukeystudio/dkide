@@ -1,4 +1,5 @@
 mod approval;
+mod auth;
 mod cancel;
 mod commands;
 mod config;
@@ -31,6 +32,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            auth::auth_login,
+            auth::auth_register,
+            auth::auth_verify,
+            auth::auth_logout,
+            auth::auth_session,
+            auth::auth_quota,
             commands::get_config,
             commands::save_config,
             commands::test_provider,

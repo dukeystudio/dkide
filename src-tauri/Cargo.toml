@@ -1,6 +1,6 @@
 [package]
 name = "dkide"
-version = "1.0.0"
+version = "1.1.0"
 description = "都客AI助手 (dkide) - Local-first desktop AI assistant with skills and tools"
 edition = "2021"
 

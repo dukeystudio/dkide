@@ -205,6 +205,17 @@ a { color: var(--primary); }
 .modal h3 { margin: 0 0 12px; }
 .modal p { color: var(--text-muted); line-height: 1.6; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.header-right { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.account-wrap { position: relative; }
+.account-chip { display: flex; align-items: center; gap: 5px; max-width: 130px; padding: 4px 8px; border-radius: 6px; background: var(--bg-subtle); border: 1px solid var(--border); color: var(--text); font-size: 12px; }
+.account-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-menu { position: absolute; top: calc(100% + 6px); right: 0; min-width: 180px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); padding: 8px; z-index: 60; }
+.account-menu-title { font-weight: 600; font-size: 13px; padding: 4px 6px; overflow: hidden; text-overflow: ellipsis; }
+.account-menu-sub { font-size: 11px; color: var(--text-muted); padding: 0 6px 6px; }
+.account-menu-item { width: 100%; text-align: left; padding: 7px 8px; border-radius: 6px; background: transparent; color: var(--danger); font-size: 12px; }
+.account-menu-item:hover { background: var(--bg-hover); }
+.login-switch { margin-top: 14px; text-align: center; font-size: 12px; color: var(--text-muted); }
+.link-btn { background: none; border: none; color: var(--primary); cursor: pointer; font-size: 12px; padding: 0 3px; }
 .approval-summary { background: var(--warn-bg); color: var(--warn-text); padding: 12px; border-radius: 8px; font-family: monospace; font-size: 12px; word-break: break-all; }
 
 /* Onboarding */

@@ -2,6 +2,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::usage::UsageStats;
 
+/// 登录会话（对应 moha 账号体系）。token 存钥匙串，不存明文密码。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AuthSession {
+    pub account: String,
+    pub login_at: i64,
+    pub coin: f64,
+    pub expire_display: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UserQuota {
+    pub coin: f64,
+    pub expire_display: String,
+    pub is_member: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Provider {
     pub id: String,

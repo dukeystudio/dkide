@@ -3,6 +3,7 @@ import { save } from '@tauri-apps/plugin-dialog';
 import type {
   AppConfig,
   Approval,
+  AuthSession,
   MarketSkill,
   Message,
   Provider,
@@ -10,9 +11,19 @@ import type {
   Skill,
   StreamEvent,
   UsageStats,
+  UserQuota,
 } from './types';
 
 export const api = {
+  authLogin: (username: string, password: string) =>
+    invoke<AuthSession>('auth_login', { username, password }),
+  authRegister: (email: string, password: string) =>
+    invoke<string>('auth_register', { email, password }),
+  authVerify: () => invoke<AuthSession | null>('auth_verify'),
+  authLogout: () => invoke<void>('auth_logout'),
+  authSession: () => invoke<AuthSession | null>('auth_session'),
+  authQuota: () => invoke<UserQuota>('auth_quota'),
+
   getConfig: () => invoke<AppConfig>('get_config'),
   saveConfig: (config: AppConfig) => invoke<void>('save_config', { config }),
   testProvider: (provider: Provider) => invoke<string>('test_provider', { provider }),

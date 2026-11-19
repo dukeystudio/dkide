@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useChatStore } from '../store';
+import { useAuthStore } from '../authStore';
 
 const props = defineProps<{ page: string; collapsed: boolean }>();
 const emit = defineEmits<{
@@ -8,6 +9,8 @@ const emit = defineEmits<{
   toggleCollapse: [];
 }>();
 const store = useChatStore();
+const auth = useAuthStore();
+const accountMenuOpen = ref(false);
 
 const providerName = computed(() => {
   const c = store.config;
@@ -15,15 +18,33 @@ const providerName = computed(() => {
   const p = c.providers.find((x) => x.id === c.active_provider_id) ?? c.providers[0];
   return p?.name ?? '';
 });
+
+async function doLogout() {
+  accountMenuOpen.value = false;
+  await auth.logout();
+}
 </script>
 
 <template>
   <aside class="sidebar" :class="{ collapsed }">
     <div class="sidebar-header">
-      <div class="brand"><span class="brand-dot"></span><span>都客AI助手</span></div>
-      <button class="icon-btn" @click="emit('toggleCollapse')" :title="collapsed ? '展开' : '收起'">
-        {{ collapsed ? '»' : '«' }}
-      </button>
+      <div class="brand"><span class="brand-dot"></span><span v-if="!collapsed">都客AI助手</span></div>
+      <div class="header-right">
+        <div v-if="auth.isLoggedIn" class="account-wrap">
+          <button class="account-chip" @click="accountMenuOpen = !accountMenuOpen" :title="auth.account">
+            <span>👤</span><span v-if="!collapsed" class="account-name">{{ auth.account }}</span>
+          </button>
+          <div v-if="accountMenuOpen" class="account-menu">
+            <div class="account-menu-title">{{ auth.account }}</div>
+            <div v-if="auth.session?.expire_display" class="account-menu-sub">{{ auth.session.expire_display }}</div>
+            <button class="account-menu-item" @click="doLogout">退出登录</button>
+          </div>
+        </div>
+        <button v-else class="btn btn-sm btn-primary" @click="auth.requireLogin('登录后可开始对话')" title="登录">登录</button>
+        <button class="icon-btn" @click="emit('toggleCollapse')" :title="collapsed ? '展开' : '收起'">
+          {{ collapsed ? '»' : '«' }}
+        </button>
+      </div>
     </div>
 
     <template v-if="page === 'chat'">

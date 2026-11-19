@@ -16,12 +16,42 @@ impl SecureStore {
     }
 
     pub fn get(&self, id: &str) -> Option<String> {
-        if let Ok(entry) = keyring::Entry::new(SERVICE, id) {
+        self.get_named(SERVICE, id)
+    }
+
+    /// 用自定义 service/user 读取（如账号 token），带本地回退。
+    pub fn get_named(&self, service: &str, user: &str) -> Option<String> {
+        if let Ok(entry) = keyring::Entry::new(service, user) {
             if let Ok(key) = entry.get_password() {
                 return Some(key);
             }
         }
-        self.read_fallback().ok()?.remove(id)
+        self.read_fallback().ok()?.remove(&format!("{}:{}", service, user))
+    }
+
+    /// 用自定义 service/user 写入（如账号 token）。
+    pub fn set_named(&self, service: &str, user: &str, key: &str) -> Result<()> {
+        match keyring::Entry::new(service, user) {
+            Ok(entry) => {
+                if entry.set_password(key).is_ok() {
+                    self.remove_from_fallback(&format!("{}:{}", service, user)).ok();
+                    return Ok(());
+                }
+                logger::warn(format!("系统钥匙串写入失败，使用本地加密回退: {}:{}", service, user));
+            }
+            Err(e) => logger::warn(format!("钥匙串不可用: {}", e)),
+        }
+        let mut map = self.read_fallback().unwrap_or_default();
+        map.insert(format!("{}:{}", service, user), key.to_string());
+        self.write_fallback(&map)
+    }
+
+    /// 用自定义 service/user 删除。
+    pub fn remove_named(&self, service: &str, user: &str) -> Result<()> {
+        if let Ok(entry) = keyring::Entry::new(service, user) {
+            let _ = entry.delete_credential();
+        }
+        self.remove_from_fallback(&format!("{}:{}", service, user))
     }
 
     pub fn set(&self, id: &str, key: &str) -> Result<()> {
