@@ -31,18 +31,41 @@ impl SecureStore {
 
     /// 用自定义 service/user 写入（如账号 token）。
     pub fn set_named(&self, service: &str, user: &str, key: &str) -> Result<()> {
+        // 不能只凭 set_password 返回 Ok 就认定持久化成功：
+        // keyring 在没有对应原生后端时（如未开启 apple-native 的 macOS）会降级为
+        // 纯内存 mock，set_password 永远 Ok，但进程重启后数据全丢。
+        // 因此写入后用一个【全新的 Entry】读回验证——mock 每次 Entry::new 都是空的，
+        // 读不回来；真正的系统钥匙串则可以。只有确认持久化后才删除本地回退条目。
+        let mut persisted = false;
         match keyring::Entry::new(service, user) {
             Ok(entry) => {
                 if entry.set_password(key).is_ok() {
-                    self.remove_from_fallback(&format!("{}:{}", service, user)).ok();
-                    return Ok(());
+                    persisted = keyring::Entry::new(service, user)
+                        .and_then(|e| e.get_password())
+                        .map(|v| v == key)
+                        .unwrap_or(false);
+                    if !persisted {
+                        logger::warn(format!(
+                            "系统钥匙串未真正持久化（可能为内存后端），改用本地加密回退: {}:{}",
+                            service, user
+                        ));
+                    }
+                } else {
+                    logger::warn(format!("系统钥匙串写入失败，使用本地加密回退: {}:{}", service, user));
                 }
-                logger::warn(format!("系统钥匙串写入失败，使用本地加密回退: {}:{}", service, user));
             }
             Err(e) => logger::warn(format!("钥匙串不可用: {}", e)),
         }
+
+        let fallback_key = format!("{}:{}", service, user);
+        if persisted {
+            // 确认系统钥匙串可读，清掉可能残留的旧回退条目
+            self.remove_from_fallback(&fallback_key).ok();
+            return Ok(());
+        }
+        // 后端不可靠：写入本地回退文件（XOR 混淆），保证重启后仍可读
         let mut map = self.read_fallback().unwrap_or_default();
-        map.insert(format!("{}:{}", service, user), key.to_string());
+        map.insert(fallback_key, key.to_string());
         self.write_fallback(&map)
     }
 
@@ -87,5 +110,55 @@ impl SecureStore {
             self.write_fallback(&map)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_store(tag: &str) -> (SecureStore, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("dkide-secure-{}-{}", tag, std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        (SecureStore::new(&dir), dir)
+    }
+
+    #[test]
+    fn fallback_roundtrip_and_remove() {
+        let (store, dir) = temp_store("roundtrip");
+        let path = dir.join("keys.dat");
+        let _ = std::fs::remove_file(&path);
+
+        let mut map = std::collections::HashMap::new();
+        map.insert("svc:user".to_string(), "secret-value".to_string());
+        store.write_fallback(&map).unwrap();
+
+        let loaded = store.read_fallback().unwrap();
+        assert_eq!(loaded.get("svc:user").map(String::as_str), Some("secret-value"));
+
+        store.remove_from_fallback("svc:user").unwrap();
+        let loaded = store.read_fallback().unwrap();
+        assert_eq!(loaded.get("svc:user"), None);
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn fallback_file_is_obfuscated() {
+        let (store, dir) = temp_store("obfuscate");
+        let path = dir.join("keys.dat");
+        let _ = std::fs::remove_file(&path);
+
+        let mut map = std::collections::HashMap::new();
+        map.insert("svc:user".to_string(), "plaintext-secret".to_string());
+        store.write_fallback(&map).unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("plaintext-secret"), "回退文件不应含明文密钥");
+        assert!(!raw.contains("svc:user"), "回退文件不应含明文键名");
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
     }
 }
