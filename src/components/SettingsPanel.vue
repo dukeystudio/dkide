@@ -3,7 +3,11 @@ import { ref, computed, watch } from 'vue';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useChatStore } from '../store';
 import { api } from '../api';
+import { useThemeStore, ACCENTS, THEME_LABELS } from '../themeStore';
 import type { AppConfig, Provider } from '../types';
+
+const theme = useThemeStore();
+const accents = Object.keys(ACCENTS) as Array<keyof typeof ACCENTS>;
 
 const store = useChatStore();
 const result = ref('');
@@ -21,13 +25,19 @@ watch(() => store.config, (c) => {
 watch(draft, () => { saved.value = false; }, { deep: true });
 
 const presets = [
+  { name: 'Agnes 3.0 Flash（国内）', url: 'https://api.agnes-ai.cn/v1', model: 'agnes-3.0-flash', builtin: true },
   { name: 'OpenAI', url: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
   { name: 'DeepSeek', url: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
   { name: 'Moonshot', url: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
   { name: '智谱', url: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4' },
 ];
 
-function addProvider(preset?: typeof presets[0]) {
+/** 内置 Agnes 服务（base_url 指向 agnes-ai.cn），key 随版本内置，无需填写 */
+function isBuiltin(p: Provider): boolean {
+  return p.id === 'builtin-agnes' || /agnes-ai\.cn/i.test(p.base_url);
+}
+
+function addProvider(preset?: (typeof presets)[0]) {
   if (!config.value) return;
   config.value.providers.push({
     id: crypto.randomUUID(),
@@ -86,15 +96,20 @@ async function pickWorkspace() {
             <label style="display:flex;align-items:center;gap:8px;font-weight:600;">
               <input type="radio" :value="p.id" v-model="config.active_provider_id" name="active" />
               {{ p.name }}
+              <span v-if="isBuiltin(p)" class="tag" style="background:var(--primary-soft);color:var(--primary-text);">内置</span>
             </label>
-            <button class="btn btn-danger btn-sm" @click="removeProvider(p.id)">删除</button>
+            <button v-if="!isBuiltin(p)" class="btn btn-danger btn-sm" @click="removeProvider(p.id)">删除</button>
           </div>
           <div class="row">
-            <div class="field"><label>名称</label><input v-model="p.name" /></div>
+            <div class="field"><label>名称</label><input v-model="p.name" :disabled="isBuiltin(p)" /></div>
             <div class="field"><label>模型名称</label><input v-model="p.model" placeholder="gpt-4o-mini" /></div>
           </div>
-          <div class="field"><label>Base URL（以 /v1 结尾）</label><input v-model="p.base_url" /></div>
-          <div class="field"><label>API Key（存入系统钥匙串）</label><input v-model="p.api_key" type="password" placeholder="sk-..." /></div>
+          <div class="field"><label>Base URL（以 /v1 结尾）</label><input v-model="p.base_url" :disabled="isBuiltin(p)" /></div>
+          <div class="field">
+            <label>{{ isBuiltin(p) ? 'API Key（内置，无需填写）' : 'API Key（存入系统钥匙串）' }}</label>
+            <input v-if="!isBuiltin(p)" v-model="p.api_key" type="password" placeholder="sk-..." />
+            <input v-else value="内置 Agnes 凭据，开箱即用" disabled />
+          </div>
           <button class="btn btn-sm" :disabled="testing" @click="test(p)">测试连接</button>
         </div>
 
@@ -140,13 +155,19 @@ async function pickWorkspace() {
 
         <div class="card">
           <div class="card-title">外观</div>
-          <div class="field">
-            <label>主题</label>
-            <select v-model="config.theme">
-              <option value="light">浅色</option>
-              <option value="dark">深色</option>
-              <option value="system">跟随系统</option>
-            </select>
+          <div class="row">
+            <div class="field">
+              <label>主题</label>
+              <select :value="theme.theme" @change="theme.setTheme(($event.target as HTMLSelectElement).value as any)">
+                <option v-for="(label, key) in THEME_LABELS" :key="key" :value="key">{{ label }}</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>配色</label>
+              <select :value="theme.accent" @change="theme.setAccent(($event.target as HTMLSelectElement).value as any)">
+                <option v-for="a in accents" :key="a" :value="a">{{ ACCENTS[a] }}</option>
+              </select>
+            </div>
           </div>
         </div>
 

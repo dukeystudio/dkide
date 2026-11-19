@@ -27,6 +27,19 @@ pub struct Provider {
     pub model: String,
 }
 
+/// 内置 Agnes（国内版）服务信息。默认开箱即用，无需用户填 key。
+pub const BUILTIN_AGNES_ID: &str = "builtin-agnes";
+pub const BUILTIN_AGNES_NAME: &str = "Agnes 3.0 Flash（国内）";
+pub const BUILTIN_AGNES_BASE_URL: &str = "https://api.agnes-ai.cn/v1";
+pub const BUILTIN_AGNES_MODEL: &str = "agnes-3.0-flash";
+/// 内置 Agnes 的 API Key（cpk- 前缀，随版本内置，不走用户钥匙串）
+pub const BUILTIN_AGNES_API_KEY: &str = "cpk-ydvjoVPqdKxGW9SAohxEJuEbzLSiuNIE0cXnYjsvp8gwJZDF";
+
+/// 判断某个 base_url 是否指向内置 Agnes 服务
+pub fn is_builtin_agnes(base_url: &str) -> bool {
+    base_url.trim().to_lowercase().starts_with("https://api.agnes-ai.cn")
+}
+
 impl Default for Provider {
     fn default() -> Self {
         Self {
@@ -36,6 +49,17 @@ impl Default for Provider {
             api_key: String::new(),
             model: "gpt-4o-mini".into(),
         }
+    }
+}
+
+/// 构造内置 Agnes provider（固定 id，作为默认 provider）
+pub fn builtin_provider() -> Provider {
+    Provider {
+        id: BUILTIN_AGNES_ID.into(),
+        name: BUILTIN_AGNES_NAME.into(),
+        base_url: BUILTIN_AGNES_BASE_URL.into(),
+        api_key: String::new(), // 内置 key 由 load/save_config 逻辑自动补齐
+        model: BUILTIN_AGNES_MODEL.into(),
     }
 }
 
@@ -76,9 +100,10 @@ fn default_token_budget() -> usize { 24000 }
 
 impl Default for AppConfig {
     fn default() -> Self {
+        let builtin = builtin_provider();
         Self {
-            providers: vec![Provider::default()],
-            active_provider_id: None,
+            providers: vec![builtin.clone()],
+            active_provider_id: Some(builtin.id.clone()),
             enabled_skills: Vec::new(),
             system_prompt: "你是一个乐于助人的 AI 助手。".into(),
             workspace_path: String::new(),
