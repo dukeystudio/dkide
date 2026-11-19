@@ -26,8 +26,8 @@ pub enum StreamEvent {
     Usage { prompt_tokens: u64, completion_tokens: u64, estimated_cost: f64 },
     /// 用户取消生成
     Cancelled,
-    /// 本轮回答结束
-    Done { content: String, reasoning: String },
+    /// 本轮回答结束（truncated=true 表示被长度上限截断，可续写）
+    Done { content: String, reasoning: String, truncated: bool },
     /// 出错
     Error { message: String },
 }
@@ -110,6 +110,9 @@ struct UsageInfo {
 #[derive(Debug, Deserialize)]
 struct Choice {
     delta: Delta,
+    /// 本块结束原因：stop / length / tool_calls 等
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -146,6 +149,15 @@ pub struct StreamResult {
     pub tool_calls: Vec<AccumToolCall>,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
+    /// 上游给出的结束原因；length 表示正文被输出上限截断
+    pub finish_reason: Option<String>,
+}
+
+impl StreamResult {
+    /// 正文是否因长度上限被截断（可被前端用于提示"继续生成"）
+    pub fn is_truncated(&self) -> bool {
+        self.finish_reason.as_deref() == Some("length")
+    }
 }
 
 /// 本块解析出的一个文本增量（正文 or 思考过程）
@@ -188,6 +200,9 @@ pub fn consume_sse_buffer(
                 result.completion_tokens = usage.completion_tokens;
             }
             for choice in &chunk.choices {
+                if let Some(ref reason) = choice.finish_reason {
+                    result.finish_reason = Some(reason.clone());
+                }
                 let delta = &choice.delta;
                 if let Some(ref reasoning) = delta.reasoning_content {
                     if !reasoning.is_empty() {
@@ -247,6 +262,28 @@ mod tests {
         let pieces = consume_sse_buffer(&mut buffer, &mut result);
         assert_eq!(pieces, vec![SsePiece::Text("你".into()), SsePiece::Text("好".into())]);
         assert_eq!(result.content, "你好");
+    }
+
+    #[test]
+    fn detects_length_truncation() {
+        let mut buffer = String::new();
+        let mut result = StreamResult::default();
+        buffer.push_str("data: {\"choices\":[{\"delta\":{\"content\":\"写到一\"},\"finish_reason\":null}]}\n\n");
+        buffer.push_str("data: {\"choices\":[{\"delta\":{\"content\":\"半\"},\"finish_reason\":\"length\"}]}\n\n");
+        consume_sse_buffer(&mut buffer, &mut result);
+        assert_eq!(result.content, "写到一半");
+        assert_eq!(result.finish_reason.as_deref(), Some("length"));
+        assert!(result.is_truncated());
+    }
+
+    #[test]
+    fn normal_stop_is_not_truncated() {
+        let mut buffer = String::new();
+        let mut result = StreamResult::default();
+        buffer.push_str("data: {\"choices\":[{\"delta\":{\"content\":\"写完\"},\"finish_reason\":\"stop\"}]}\n\n");
+        consume_sse_buffer(&mut buffer, &mut result);
+        assert_eq!(result.finish_reason.as_deref(), Some("stop"));
+        assert!(!result.is_truncated());
     }
 
     #[test]

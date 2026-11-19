@@ -192,8 +192,13 @@ pub struct Message {
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// 正文是否因输出长度上限被截断（可用于提示"继续生成"）
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub truncated: bool,
     pub created_at: i64,
 }
+
+fn is_false(v: &bool) -> bool { !*v }
 
 impl Message {
     #[allow(dead_code)]
@@ -205,12 +210,13 @@ impl Message {
             reasoning: None,
             tool_calls: None,
             tool_call_id: None,
+            truncated: false,
             created_at: chrono::Utc::now().timestamp(),
         }
     }
 
-    /// 带思考过程的助手消息（reasoning 为空则不存）
-    pub fn assistant_with(content: impl Into<String>, reasoning: Option<String>) -> Self {
+    /// 带截断标记的助手消息：truncated=true 表示正文被输出上限截断，可续写
+    pub fn assistant_with_truncated(content: impl Into<String>, reasoning: Option<String>, truncated: bool) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             role: Role::Assistant,
@@ -218,6 +224,7 @@ impl Message {
             reasoning: reasoning.filter(|r| !r.trim().is_empty()),
             tool_calls: None,
             tool_call_id: None,
+            truncated,
             created_at: chrono::Utc::now().timestamp(),
         }
     }

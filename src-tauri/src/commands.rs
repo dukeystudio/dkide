@@ -376,7 +376,7 @@ async fn run_one_subagent(
         None, None, Some(1200),
     )
     .with_read_only();
-    let (answer, _reasoning, usage) = engine.run(&history, &sink).await?;
+    let (answer, _reasoning, usage, _truncated) = engine.run(&history, &sink).await?;
     let summary = truncate_utf8_text(answer.trim(), 1200);
     let summary = if summary.trim().is_empty() { "本子任务未返回可汇总内容。".into() } else { summary };
     Ok((summary, usage))
@@ -572,7 +572,7 @@ pub async fn chat(
         effective_enable_thinking, temperature, effective_max_tokens,
     );
 
-    let (answer, reasoning, usage) = tokio::select! {
+    let (answer, reasoning, usage, truncated) = tokio::select! {
         result = engine.run(&history, &channel) => {
             match result {
                 Ok(value) => value,
@@ -594,7 +594,7 @@ pub async fn chat(
     let mut sessions = state.sessions.lock().unwrap();
     if let Some(session) = sessions.iter_mut().find(|s| s.id == session_id) {
         if !answer.is_empty() || !reasoning.trim().is_empty() {
-            session.messages.push(Message::assistant_with(answer.clone(), Some(reasoning)));
+            session.messages.push(Message::assistant_with_truncated(answer.clone(), Some(reasoning), truncated));
         }
         session.usage.prompt_tokens += usage.prompt_tokens + subagent_usage.prompt_tokens;
         session.usage.completion_tokens += usage.completion_tokens + subagent_usage.completion_tokens;

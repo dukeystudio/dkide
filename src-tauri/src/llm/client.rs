@@ -94,7 +94,7 @@ impl<'a> ChatEngine<'a> {
         &self,
         history: &[Message],
         channel: &Channel<StreamEvent>,
-    ) -> Result<(String, String, UsageStats)> {
+    ) -> Result<(String, String, UsageStats, bool)> {
         let messages = self.build_messages(history);
         let tools = if self.provider.tool_calling { self.build_tools() } else { Vec::new() };
         let price = if self.custom_price > 0.0 { self.custom_price } else { model_price(&self.provider.model) };
@@ -104,7 +104,7 @@ impl<'a> ChatEngine<'a> {
         for _ in 0..MAX_TOOL_ROUNDS {
             if self.cancels.is_cancelled(self.session_id) {
                 let _ = channel.send(StreamEvent::Cancelled);
-                return Ok((String::new(), String::new(), total_usage));
+                return Ok((String::new(), String::new(), total_usage, false));
             }
 
             let result = self.stream_once(&messages, &tools, channel).await?;
@@ -124,11 +124,13 @@ impl<'a> ChatEngine<'a> {
             logger::llm(format!("model={} prompt={} completion={}", self.provider.model, prompt, completion));
 
             if result.tool_calls.is_empty() {
+                let mut truncated = result.is_truncated();
                 let mut content = result.content;
                 if content.trim().is_empty() && !all_reasoning.trim().is_empty() {
                     logger::llm("empty answer after reasoning, retrying without thinking");
                     if let Ok(retry) = self.stream_once_with_thinking(&messages, &tools, channel, Some(false), None).await {
                         if !retry.content.trim().is_empty() {
+                            truncated = retry.is_truncated();
                             content = retry.content;
                             let prompt = if retry.prompt_tokens > 0 { retry.prompt_tokens } else { UsageStats::estimate(&serde_json::to_string(&messages).unwrap_or_default()) };
                             let completion = if retry.completion_tokens > 0 { retry.completion_tokens } else { UsageStats::estimate(&content) };
@@ -142,8 +144,8 @@ impl<'a> ChatEngine<'a> {
                     }
                 }
                 let answer = resolve_answer_content(content, &all_reasoning);
-                let _ = channel.send(StreamEvent::Done { content: answer.clone(), reasoning: all_reasoning.clone() });
-                return Ok((answer, all_reasoning, total_usage));
+                let _ = channel.send(StreamEvent::Done { content: answer.clone(), reasoning: all_reasoning.clone(), truncated });
+                return Ok((answer, all_reasoning, total_usage, truncated));
             }
 
             let wire_calls: Vec<WireToolCall> = result.tool_calls.iter().map(|c| WireToolCall {
@@ -169,7 +171,7 @@ impl<'a> ChatEngine<'a> {
             for call in &result.tool_calls {
                 if self.cancels.is_cancelled(self.session_id) {
                     let _ = channel.send(StreamEvent::Cancelled);
-                    return Ok((String::new(), String::new(), total_usage));
+                    return Ok((String::new(), String::new(), total_usage, false));
                 }
                 let call_id = if call.id.is_empty() { format!("call_{}", call.index) } else { call.id.clone() };
                 let _ = channel.send(StreamEvent::Tool {
@@ -191,7 +193,7 @@ impl<'a> ChatEngine<'a> {
 
         let msg = "工具调用轮数超过上限，已停止。".to_string();
         let _ = channel.send(StreamEvent::Error { message: msg.clone() });
-        Ok((msg, all_reasoning, total_usage))
+        Ok((msg, all_reasoning, total_usage, false))
     }
 
     /// 递归处理后续工具轮次（acc_reasoning 携带前序轮次累积的思考过程）
@@ -203,11 +205,11 @@ impl<'a> ChatEngine<'a> {
         mut total_usage: UsageStats,
         mut acc_reasoning: String,
         round: usize,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(String, String, UsageStats)>> + Send + 'b>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(String, String, UsageStats, bool)>> + Send + 'b>> {
         Box::pin(async move {
             if round >= MAX_TOOL_ROUNDS || self.cancels.is_cancelled(self.session_id) {
                 let _ = channel.send(StreamEvent::Cancelled);
-                return Ok((String::new(), String::new(), total_usage));
+                return Ok((String::new(), String::new(), total_usage, false));
             }
             let price = if self.custom_price > 0.0 { self.custom_price } else { model_price(&self.provider.model) };
             let result = self.stream_once(messages, tools, channel).await?;
@@ -225,11 +227,13 @@ impl<'a> ChatEngine<'a> {
             });
 
             if result.tool_calls.is_empty() {
+                let mut truncated = result.is_truncated();
                 let mut content = result.content;
                 if content.trim().is_empty() && !acc_reasoning.trim().is_empty() {
                     logger::llm("empty answer after tool rounds, retrying without thinking");
                     if let Ok(retry) = self.stream_once_with_thinking(messages, tools, channel, Some(false), None).await {
                         if !retry.content.trim().is_empty() {
+                            truncated = retry.is_truncated();
                             content = retry.content;
                             let prompt = if retry.prompt_tokens > 0 { retry.prompt_tokens } else { UsageStats::estimate(&serde_json::to_string(messages).unwrap_or_default()) };
                             let completion = if retry.completion_tokens > 0 { retry.completion_tokens } else { UsageStats::estimate(&content) };
@@ -243,8 +247,8 @@ impl<'a> ChatEngine<'a> {
                     }
                 }
                 let answer = resolve_answer_content(content, &acc_reasoning);
-                let _ = channel.send(StreamEvent::Done { content: answer.clone(), reasoning: acc_reasoning.clone() });
-                return Ok((answer, acc_reasoning, total_usage));
+                let _ = channel.send(StreamEvent::Done { content: answer.clone(), reasoning: acc_reasoning.clone(), truncated });
+                return Ok((answer, acc_reasoning, total_usage, truncated));
             }
 
             let wire_calls: Vec<WireToolCall> = result.tool_calls.iter().map(|c| WireToolCall {
@@ -355,7 +359,7 @@ impl<'a> ChatEngine<'a> {
         channel: &Channel<StreamEvent>,
         reasoning: &str,
         mut total_usage: UsageStats,
-    ) -> Result<(String, String, UsageStats)> {
+    ) -> Result<(String, String, UsageStats, bool)> {
         let mut forced = messages.to_vec();
         forced.push(WireMessage {
             role: "user".into(),
@@ -375,13 +379,13 @@ impl<'a> ChatEngine<'a> {
                     estimated_cost: total_usage.estimated_cost,
                 });
                 let answer = resolve_answer_content(result.content, reasoning);
-                let _ = channel.send(StreamEvent::Done { content: answer.clone(), reasoning: reasoning.to_string() });
-                Ok((answer, reasoning.to_string(), total_usage))
+                let _ = channel.send(StreamEvent::Done { content: answer.clone(), reasoning: reasoning.to_string(), truncated: false });
+                Ok((answer, reasoning.to_string(), total_usage, false))
             }
             Err(error) => {
                 let answer = format!("检测到重复工具调用，已停止自动尝试。{}\n请补充说明需要生成的具体内容。", error.0);
-                let _ = channel.send(StreamEvent::Done { content: answer.clone(), reasoning: reasoning.to_string() });
-                Ok((answer, reasoning.to_string(), total_usage))
+                let _ = channel.send(StreamEvent::Done { content: answer.clone(), reasoning: reasoning.to_string(), truncated: false });
+                Ok((answer, reasoning.to_string(), total_usage, false))
             }
         }
     }

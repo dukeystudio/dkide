@@ -353,6 +353,7 @@ export const useChatStore = defineStore('chat', () => {
               role: 'assistant',
               content: event.content || '（模型本轮未返回内容。）',
               reasoning: event.reasoning || streamReasoning.value[sid] || undefined,
+              truncated: event.truncated || undefined,
               created_at: Math.floor(Date.now() / 1000),
             });
             break;
@@ -446,6 +447,21 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
+   * 从被截断的助手消息续写：保留半截正文作为上下文，追加一条"继续"指令重新生成。
+   * 仅当目标是最后一条消息时可续写（后面若有更新的用户消息，续写会打乱上下文）。
+   */
+  async function continueGeneration(messageIndex: number) {
+    const session = currentSession.value;
+    if (!session || isStreaming(session.id)) return;
+    const m = session.messages[messageIndex];
+    if (!m || m.role !== 'assistant' || messageIndex !== session.messages.length - 1) return;
+    const auth = useAuthStore();
+    if (!auth.requireLogin('登录后才能继续生成')) return;
+    if (!requireProvider()) return;
+    await send('继续写：从上面中断的地方接着完成，不要重复已经写过的部分。');
+  }
+
+  /**
    * 编辑某条用户消息并重新生成（对标 ChatGPT/Claude 编辑历史）。
    * 保存修改 → 删除该用户消息之后的所有回复 → 基于新内容重新生成。
    * onlyUpdate=true 时只保存不重新生成。
@@ -482,7 +498,7 @@ export const useChatStore = defineStore('chat', () => {
     streamingIds, totalUsage, pendingApprovals,
     isStreaming, textFor, reasoningFor, toolsFor, blocksFor, filesFor, usageFor, startTimeFor,
     init, newSession, selectSession, deleteSession, renameSession, togglePin,
-    deleteMessage, refreshUsage, send, cancel, regenerate, undo, editMessage, saveConfig,
+    deleteMessage, refreshUsage, send, cancel, regenerate, continueGeneration, undo, editMessage, saveConfig,
     respondApproval,
   };
 });

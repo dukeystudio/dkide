@@ -519,6 +519,7 @@ async function onBubbleClick(e: MouseEvent) {
               <div class="msg-actions">
                 <button @click="copyMessage(m)">{{ copiedId === m.id ? '已复制' : '复制' }}</button>
                 <button v-if="m.role === 'assistant'" @click="store.regenerate(mi)">重新生成</button>
+                <button v-if="m.role === 'assistant' && m.truncated && mi === (session?.messages.length ?? 0) - 1" class="continue-btn" title="从中断处接着写" @click="store.continueGeneration(mi)">继续生成</button>
                 <button @click="startEdit(m)">编辑</button>
                 <button v-if="m.role === 'user'" title="撤销到此：删除该条提问及其后所有回复" @click="store.undo(m.id)">↩ 撤销到此</button>
                 <button @click="store.deleteMessage(store.currentId!, m.id)">删除</button>
@@ -542,6 +543,10 @@ async function onBubbleClick(e: MouseEvent) {
                 <div v-if="historyReasoningOpen[m.id]" class="reasoning-body" v-html="md(m.reasoning)"></div>
               </div>
               <div class="bubble" v-html="md(messageContent(m))" @click="onBubbleClick"></div>
+              <div v-if="m.truncated" class="truncated-tip">
+                <span>⚠️ 内容因输出长度上限中断，并非完整回答。</span>
+                <button v-if="mi === (session?.messages.length ?? 0) - 1" class="continue-btn" @click="store.continueGeneration(mi)">继续生成 →</button>
+              </div>
             </template>
           </div>
         </div>

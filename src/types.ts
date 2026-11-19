@@ -48,6 +48,8 @@ export interface Message {
   content: string;
   /** 模型思考过程（可选） */
   reasoning?: string;
+  /** 正文因输出长度上限被截断（可续写） */
+  truncated?: boolean;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   created_at: number;
@@ -178,5 +180,5 @@ export type StreamEvent =
   | { type: 'approval_required'; id: string; tool: string; summary: string }
   | { type: 'usage'; prompt_tokens: number; completion_tokens: number; estimated_cost: number }
   | { type: 'cancelled' }
-  | { type: 'done'; content: string; reasoning?: string }
+  | { type: 'done'; content: string; reasoning?: string; truncated?: boolean }
   | { type: 'error'; message: string };
