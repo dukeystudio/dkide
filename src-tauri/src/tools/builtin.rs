@@ -4,6 +4,11 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 use tauri::ipc::Channel;
 
 use crate::approval::ApprovalBroker;
@@ -320,9 +325,11 @@ fn normalize_shell_command(command: &str) -> (bool, &str) {
 fn kill_child_tree(child: &mut std::process::Child) {
     let pid = child.id().to_string();
     let _ = child.kill();
-    let _ = std::process::Command::new("taskkill")
-        .args(["/PID", pid.as_str(), "/T", "/F"])
-        .output();
+    let mut kill_cmd = std::process::Command::new("taskkill");
+    kill_cmd.args(["/PID", pid.as_str(), "/T", "/F"]);
+    #[cfg(target_os = "windows")]
+    kill_cmd.creation_flags(CREATE_NO_WINDOW);
+    let _ = kill_cmd.output();
     let _ = child.wait();
 }
 
@@ -343,20 +350,21 @@ fn run_command_shell(command: &str, cwd: &Path, ctx: &ToolContext) -> Result<Str
     };
 
     #[cfg(target_os = "windows")]
-    let mut child = if use_powershell {
-        std::process::Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-Command", shell_command.as_str()])
-            .current_dir(cwd)
+    let mut child = {
+        let mut command = if use_powershell {
+            let mut command = std::process::Command::new("powershell.exe");
+            command.args(["-NoProfile", "-NonInteractive", "-Command", shell_command.as_str()]);
+            command
+        } else {
+            let mut command = std::process::Command::new("cmd");
+            command.args(["/C", shell_command.as_str()]);
+            command
+        };
+        command.current_dir(cwd)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .spawn()
-    } else {
-        std::process::Command::new("cmd")
-            .args(["/C", shell_command.as_str()])
-            .current_dir(cwd)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
+            .creation_flags(CREATE_NO_WINDOW);
+        command.spawn()
     }
     .map_err(|e| AppError(format!("启动命令失败: {}", e)))?;
 

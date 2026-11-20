@@ -49,6 +49,42 @@ pub fn get_config(state: State<'_, AppState>) -> Result<AppConfig> {
     Ok(state.config.lock().unwrap().clone())
 }
 
+/// 默认项目根目录：应用数据目录下的 projects。
+#[tauri::command]
+pub fn get_project_root(app: AppHandle) -> Result<String> {
+    let dir = app.path()
+        .app_data_dir()
+        .map_err(|e| AppError(e.to_string()))?
+        .join("projects");
+    Ok(dir.to_string_lossy().to_string())
+}
+
+/// 新建项目目录：parent 留空时使用默认项目根目录，重名则报错。
+#[tauri::command]
+pub fn create_project(app: AppHandle, parent: Option<String>, name: String) -> Result<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(AppError("项目名称不能为空".into()));
+    }
+    if name.contains(['\\', '/', ':', '*', '?', '"', '<', '>', '|']) {
+        return Err(AppError("项目名称含有非法字符".into()));
+    }
+    let base = match parent.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+        Some(value) => PathBuf::from(value),
+        None => app.path()
+            .app_data_dir()
+            .map_err(|e| AppError(e.to_string()))?
+            .join("projects"),
+    };
+    std::fs::create_dir_all(&base)?;
+    let target = base.join(name);
+    if target.exists() {
+        return Err(AppError(format!("项目 {} 已存在", name)));
+    }
+    std::fs::create_dir_all(&target)?;
+    Ok(target.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 pub fn save_config(state: State<'_, AppState>, config: AppConfig) -> Result<()> {
     let (workspace_changed, removed_provider_ids) = {

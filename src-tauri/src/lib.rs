@@ -66,6 +66,8 @@ pub fn run() {
             commands::open_skills_dir,
             commands::list_marketplace,
             commands::get_app_info,
+            commands::get_project_root,
+            commands::create_project,
         ])
         .run(tauri::generate_context!())
         .expect("Tauri 应用运行失败");

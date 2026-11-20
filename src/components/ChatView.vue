@@ -4,6 +4,7 @@ import { useChatStore } from '../store';
 import { useSkillsStore } from '../skillsStore';
 import { api } from '../api';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { open } from '@tauri-apps/plugin-dialog';
 import ThemeMenu from './ThemeMenu.vue';
 import { renderMarkdown, copyText } from '../markdown';
 import type { Message, GeneratedFile, Skill, StreamBlock, TextAttachment } from '../types';
@@ -22,6 +23,18 @@ const editingId = ref<string | null>(null);
 const editContent = ref('');
 const copiedId = ref('');
 const skillMenuOpen = ref(false);
+const projectMenuOpen = ref(false);
+const projectTip = ref('');
+let projectTipTimer: number | null = null;
+
+function showProjectTip(message: string) {
+  projectTip.value = message;
+  if (projectTipTimer !== null) window.clearTimeout(projectTipTimer);
+  projectTipTimer = window.setTimeout(() => {
+    projectTip.value = '';
+    projectTipTimer = null;
+  }, 2600);
+}
 
 const session = computed(() => store.currentSession);
 const streaming = computed(() => session.value ? store.isStreaming(session.value.id) : false);
@@ -125,6 +138,7 @@ onMounted(() => {
 });
 onUnmounted(() => {
   if (clockTimer !== null) window.clearInterval(clockTimer);
+  if (projectTipTimer !== null) window.clearTimeout(projectTipTimer);
   stopActiveResize?.();
   unlistenDragDrop?.();
 });
@@ -191,6 +205,7 @@ function onDocClick(e: MouseEvent) {
   const el = e.target as HTMLElement;
   if (!el.closest('.toolbar-menu')) {
     skillMenuOpen.value = false;
+    projectMenuOpen.value = false;
   }
 }
 onMounted(() => document.addEventListener('click', onDocClick));
@@ -339,6 +354,63 @@ function goEditProvider() {
 
 function onSkillButtonClick() {
   skillMenuOpen.value = !skillMenuOpen.value;
+  projectMenuOpen.value = false;
+}
+
+function onProjectButtonClick() {
+  projectMenuOpen.value = !projectMenuOpen.value;
+  skillMenuOpen.value = false;
+}
+
+const workspaceLabel = computed(() => {
+  const path = store.config?.workspace_path?.trim() ?? '';
+  if (!path) return '选择工作项目';
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || '选择工作项目';
+});
+
+/** 从本地目录选择工作项目 */
+async function pickWorkspace() {
+  projectMenuOpen.value = false;
+  const selected = await open({ directory: true, multiple: false, title: '选择工作项目目录' });
+  if (!selected || typeof selected !== 'string') return;
+  const c = store.config;
+  if (!c) return;
+  try {
+    await store.saveConfig({ ...c, workspace_path: selected });
+    showProjectTip(`已切换工作项目：${workspaceLabel.value}`);
+  } catch {
+    showProjectTip('切换工作项目失败');
+  }
+}
+
+/** 不使用项目：清空工作目录 */
+async function clearWorkspace() {
+  projectMenuOpen.value = false;
+  const c = store.config;
+  if (!c || !c.workspace_path) return;
+  try {
+    await store.saveConfig({ ...c, workspace_path: '' });
+    showProjectTip('已不使用项目，文件工具改在应用数据目录');
+  } catch {
+    showProjectTip('清除工作项目失败');
+  }
+}
+
+/** 新建项目：默认建在应用数据目录的 projects 下，重名由后端拦截 */
+async function createNewProject() {
+  projectMenuOpen.value = false;
+  const name = window.prompt('请输入项目名称（不含 \\ / : * ? " < > |）', '新建项目');
+  if (!name || !name.trim()) return;
+  try {
+    const path = await api.createProject('', name.trim());
+    const c = store.config;
+    if (!c) return;
+    await store.saveConfig({ ...c, workspace_path: path });
+    showProjectTip(`已创建并切换工作项目：${name.trim()}`);
+  } catch (error) {
+    showProjectTip(`创建项目失败：${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function toggleBlock(id: number) {
@@ -617,6 +689,7 @@ async function onBubbleClick(e: MouseEvent) {
             </span>
           </div>
           <div v-if="attachmentError" class="attachment-error">{{ attachmentError }}</div>
+          <div v-if="projectTip" class="project-tip">{{ projectTip }}</div>
           <textarea
             v-model="input"
             placeholder="输入消息，Enter 发送，Shift+Enter 换行"
@@ -672,6 +745,20 @@ async function onBubbleClick(e: MouseEvent) {
                     </span>
                   </div>
                   <button class="popover-foot" @click="skillMenuOpen = false; emit('openSkills')">＋ 管理 / 安装技能</button>
+                </div>
+              </div>
+
+              <div class="toolbar-menu">
+                <button class="toolbar-btn" :class="{ open: projectMenuOpen }" title="切换当前工作项目" @click="onProjectButtonClick">
+                  <span class="tb-icon">📁</span>
+                  <span class="tb-label">{{ workspaceLabel }}</span>
+                  <span class="tb-caret">▾</span>
+                </button>
+                <div v-if="projectMenuOpen" class="toolbar-popover project-popover" @click.stop>
+                  <div class="popover-head">当前工作目录：{{ store.config?.workspace_path || '应用数据目录' }}</div>
+                  <button class="popover-item" @click="createNewProject"><span class="tb-icon">＋</span><span class="pi-name">新建项目</span></button>
+                  <button class="popover-item" @click="pickWorkspace"><span class="tb-icon">📁</span><span class="pi-name">从本地目录选择</span></button>
+                  <button class="popover-item" :class="{ static: !store.config?.workspace_path }" @click="clearWorkspace"><span class="tb-icon">↩</span><span class="pi-name">不使用项目</span></button>
                 </div>
               </div>
             </div>

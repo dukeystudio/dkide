@@ -28,6 +28,8 @@ export const api = {
 
   getConfig: () => invoke<AppConfig>('get_config'),
   saveConfig: (config: AppConfig) => invoke<void>('save_config', { config }),
+  getProjectRoot: () => invoke<string>('get_project_root'),
+  createProject: (parent: string, name: string) => invoke<string>('create_project', { parent, name }),
   testProvider: (provider: Provider) => invoke<string>('test_provider', { provider }),
 
   listSessions: () => invoke<Session[]>('list_sessions'),

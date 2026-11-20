@@ -316,6 +316,14 @@ a { color: var(--primary); }
 .pi-sub { font-size: 11px; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .popover-foot { width: 100%; margin-top: 4px; padding: 8px; border-top: 1px solid var(--border); color: var(--primary); font-size: 12px; text-align: left; }
 .popover-foot:hover { background: var(--bg-hover); }
+
+/* 工作项目下拉 */
+.project-popover { width: 300px; }
+.project-popover .popover-item { align-items: center; gap: 10px; border: 1px solid transparent; background: transparent; color: var(--text); }
+.project-popover .popover-item .tb-icon { width: 16px; text-align: center; color: var(--text-muted); }
+.project-popover .popover-item .pi-name { font-size: 13px; }
+.project-popover .popover-item.static { opacity: .5; cursor: default; }
+.project-tip { font-size: 12px; color: var(--success); background: var(--primary-soft); border-radius: 6px; padding: 5px 9px; }
 .popover-empty { padding: 12px 8px; font-size: 12px; color: var(--text-faint); }
 
 /* 面板页 */
