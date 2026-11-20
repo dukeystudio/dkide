@@ -465,7 +465,18 @@ async function openFilePreview(f: GeneratedFile) {
 }
 function closeFilePreview() { previewFile.value = null; previewContent.value = ''; }
 async function openFileInOs(f: GeneratedFile) {
-  await api.openFileInOs(f.abs_path);
+  try {
+    await api.openFileInOs(f.abs_path);
+  } catch (e: any) {
+    showCopyTip(`打开失败：${typeof e === 'string' ? e : e?.message ?? String(e)}`);
+  }
+}
+async function revealFile(f: GeneratedFile) {
+  try {
+    await api.revealFileInOs(f.abs_path);
+  } catch (e: any) {
+    showCopyTip(`定位失败：${typeof e === 'string' ? e : e?.message ?? String(e)}`);
+  }
 }
 function showCopyTip(msg: string) {
   copyTip.value = msg;
@@ -595,14 +606,32 @@ async function onBubbleClick(e: MouseEvent) {
               </div>
             </div>
             <template v-if="editingId !== m.id">
-              <div v-if="m.role === 'assistant' && m.reasoning && store.config?.show_reasoning" class="reasoning" :class="{ open: historyReasoningOpen[m.id] }">
-                <div class="reasoning-head" @click="toggleHistoryReasoning(m.id)">
-                  <span>💭 思考过程</span>
-                  <span class="reasoning-toggle">{{ historyReasoningOpen[m.id] ? '收起' : '展开' }}</span>
+              <div v-if="m.role === 'assistant' && m.reasoning && store.config?.show_reasoning" class="thought-fold">
+                <div class="thought-fold-line" @click="toggleHistoryReasoning(m.id)">
+                  <span class="thought-icon">◌</span>
+                  <span>已完成思考</span>
+                  <span class="thought-caret">{{ historyReasoningOpen[m.id] ? '⌄' : '›' }}</span>
                 </div>
-                <div v-if="historyReasoningOpen[m.id]" class="reasoning-body" v-html="md(m.reasoning)"></div>
+                <div v-if="historyReasoningOpen[m.id]" class="thought-fold-body" v-html="md(m.reasoning)"></div>
               </div>
               <div class="bubble" v-html="md(messageContent(m))" @click="onBubbleClick"></div>
+              <div v-if="m.files?.length" class="message-files">
+                <div
+                  v-for="f in m.files"
+                  :key="f.abs_path"
+                  class="message-file-card"
+                  :title="`${f.path}\n单击打开预览，右键在文件管理器中定位`"
+                  @click="openFilePreview(f)"
+                  @contextmenu.prevent="revealFile(f)"
+                >
+                  <span class="mfc-icon">{{ fileIcon(f) }}</span>
+                  <span class="mfc-info">
+                    <span class="mfc-name">{{ fileName(f) }}</span>
+                    <span class="mfc-path">{{ f.path }}</span>
+                  </span>
+                  <span class="mfc-hint">打开预览 · 右键定位</span>
+                </div>
+              </div>
               <div v-if="m.truncated" class="truncated-tip">
                 <span>⚠️ 内容因输出长度上限中断，并非完整回答。</span>
                 <button v-if="mi === (session?.messages.length ?? 0) - 1" class="continue-btn" @click="store.continueGeneration(mi)">继续生成 →</button>
@@ -626,13 +655,13 @@ async function onBubbleClick(e: MouseEvent) {
             <template v-for="block in streamBlocks" :key="block.id">
               <div v-if="block.kind === 'text'" class="stream-text" v-html="md(block.text || '')"></div>
               <div v-else-if="block.kind === 'reasoning' && store.config?.show_reasoning" class="stream-status-item">
-                <div class="stream-status-line" @click="toggleBlock(block.id)">
-                  <span class="status-icon">&lt;/&gt;</span>
+                <div class="stream-status-line thought-fold-line" @click="toggleBlock(block.id)">
+                  <span class="thought-icon">◌</span>
                   <span>正在思考</span>
                   <span class="status-detail">{{ blockDuration(block) }}</span>
-                  <span class="status-caret">{{ isBlockExpanded(block.id) ? '▾' : '▸' }}</span>
+                  <span class="thought-caret">{{ isBlockExpanded(block.id) ? '⌄' : '›' }}</span>
                 </div>
-                <div v-if="isBlockExpanded(block.id)" class="stream-block-detail" v-html="md(block.text || '')"></div>
+                <div v-if="isBlockExpanded(block.id)" class="thought-fold-body" v-html="md(block.text || '')"></div>
               </div>
               <div v-else-if="block.kind === 'subagent'" class="stream-status-item">
                 <div class="stream-status-line" @click="toggleBlock(block.id)">

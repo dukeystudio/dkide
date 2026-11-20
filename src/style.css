@@ -184,6 +184,16 @@ a { color: var(--primary); }
 .msg-actions button:hover { background: var(--bg-hover); color: var(--text); }
 .msg-actions button.continue-btn { color: var(--accent); font-weight: 600; }
 .stream-elapsed { font-size: 11px; color: var(--text-faint); margin-bottom: 8px; }
+
+/* 消息内交付文件卡片：单击预览，右键定位文件位置 */
+.message-files { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.message-file-card { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-subtle); cursor: pointer; transition: border-color .15s, background .15s; }
+.message-file-card:hover { border-color: var(--primary); background: var(--bg-hover); }
+.mfc-icon { font-size: 18px; flex-shrink: 0; }
+.mfc-info { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.mfc-name { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mfc-path { font-size: 11px; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mfc-hint { font-size: 11px; color: var(--text-faint); white-space: nowrap; flex-shrink: 0; }
 .truncated-tip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; padding: 8px 12px; border-radius: 8px; background: var(--warn-bg); color: var(--warn-text); font-size: 12px; }
 .truncated-tip .continue-btn { background: none; border: none; color: var(--accent); font-weight: 600; cursor: pointer; padding: 0; }
 .truncated-tip .continue-btn:hover { text-decoration: underline; }
@@ -198,14 +208,13 @@ a { color: var(--primary); }
 .code-wrap:hover .copy-code { opacity: 1; }
 .copy-code:hover { background: rgba(255,255,255,.2); }
 
-/* 思考过程区块（对标 Claude thinking） */
-.reasoning { border: 1px solid var(--border); border-left: 3px solid var(--primary); border-radius: 8px; margin-bottom: 10px; font-size: 12px; background: var(--bg-subtle); }
-.reasoning-head { display: flex; align-items: center; gap: 8px; padding: 7px 11px; cursor: pointer; color: var(--text-muted); font-weight: 600; }
-.reasoning-head:hover { background: var(--bg-hover); }
-.reasoning-toggle { margin-left: auto; font-size: 11px; font-weight: 400; color: var(--text-faint); }
-.reasoning-time { font-family: monospace; font-size: 11px; font-weight: 400; color: var(--primary-text); }
-.reasoning-body { padding: 8px 12px; border-top: 1px dashed var(--border); color: var(--text-muted); font-family: monospace; font-size: 11px; white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow-y: auto; }
-.reasoning-body.streaming { max-height: none; overflow-y: visible; }
+/* 思考过程：轻量折叠行（对标千问/豆包） */
+.thought-fold { margin-bottom: 10px; font-size: 12px; }
+.thought-fold-line { display: flex; align-items: center; gap: 8px; padding: 3px 0; color: var(--text-faint); cursor: pointer; user-select: none; }
+.thought-fold-line:hover { color: var(--text-muted); }
+.thought-icon { font-size: 14px; line-height: 1; color: var(--text-faint); }
+.thought-caret { margin-left: auto; font-size: 13px; color: var(--text-faint); }
+.thought-fold-body { padding: 8px 0 2px 22px; color: var(--text-muted); line-height: 1.7; font-size: 12px; word-break: break-word; }
 .stream-placeholder { color: var(--text-faint); font-size: 12px; padding: 4px 0 8px; }
 .stream-text { color: var(--text); font-size: 14px; line-height: 1.7; margin-bottom: 10px; }
 .stream-status-item { margin-bottom: 8px; }
@@ -215,8 +224,7 @@ a { color: var(--primary); }
 .status-detail { color: var(--text-faint); font-size: 11px; }
 .status-caret { color: var(--text-faint); font-size: 10px; }
 .stream-block-detail { padding: 8px 10px; margin-top: 4px; border-radius: 8px; background: var(--bg-subtle); color: var(--text-muted); font-family: monospace; font-size: 11px; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto; }
-.reasoning-body :deep(p) { margin: 0 0 6px; }
-.reasoning-placeholder { color: var(--text-faint); font-family: var(--font); }
+.stream-status-line.thought-fold-line { width: 100%; }
 .stream-elapsed { font-size: 11px; color: var(--text-faint); font-family: monospace; white-space: nowrap; }
 
 /* 右侧生成文件面板（对标 opencode 工作区） */

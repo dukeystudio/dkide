@@ -68,6 +68,8 @@ pub fn run() {
             commands::get_app_info,
             commands::get_project_root,
             commands::create_project,
+            commands::reveal_file_in_os,
+            commands::record_message_files,
         ])
         .run(tauri::generate_context!())
         .expect("Tauri 应用运行失败");

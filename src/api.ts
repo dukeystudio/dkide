@@ -72,6 +72,8 @@ export const api = {
   },
   readTextAttachment: (absPath: string) => invoke<TextAttachment>('read_text_attachment', { absPath }),
   openFileInOs: (absPath: string) => invoke<void>('open_file_in_os', { absPath }),
+  revealFileInOs: (absPath: string) => invoke<void>('reveal_file_in_os', { absPath }),
+  recordMessageFiles: (sessionId: string, files: unknown[]) => invoke<void>('record_message_files', { sessionId, files }),
 
   listApprovals: () => invoke<Approval[]>('list_approvals'),
   respondApproval: (id: string, approved: boolean) =>

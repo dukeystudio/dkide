@@ -50,6 +50,8 @@ export interface Message {
   reasoning?: string;
   /** 正文因输出长度上限被截断（可续写） */
   truncated?: boolean;
+  /** 本轮生成/修改的文件，随消息持久化 */
+  files?: GeneratedFile[];
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   created_at: number;

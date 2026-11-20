@@ -12,7 +12,7 @@ use crate::cancel::CancelRegistry;
 use crate::error::{AppError, Result};
 use crate::llm::{ChatEngine, StreamEvent};
 use crate::logger;
-use crate::models::{AppConfig, Message, Provider, Role, Session, TextAttachment};
+use crate::models::{AppConfig, GeneratedFile, Message, Provider, Role, Session, TextAttachment};
 use crate::skill::Skill;
 use crate::state::AppState;
 use crate::tools::{ToolContext, ToolPolicy};
@@ -739,10 +739,66 @@ pub fn open_file_in_os(abs_path: String) -> Result<()> {
     #[cfg(target_os = "macos")]
     std::process::Command::new("open").arg(&p).spawn()?;
     #[cfg(target_os = "windows")]
-    std::process::Command::new("explorer").arg(&p).spawn()?;
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut command = std::process::Command::new("explorer");
+        command.arg(&p).creation_flags(CREATE_NO_WINDOW);
+        command.spawn()?;
+    }
     #[cfg(target_os = "linux")]
     std::process::Command::new("xdg-open").arg(&p).spawn()?;
     Ok(())
+}
+
+/// 在系统文件管理器中定位文件（右键"打开文件位置"）
+#[tauri::command]
+pub fn reveal_file_in_os(abs_path: String) -> Result<()> {
+    let p = PathBuf::from(&abs_path);
+    if !p.exists() {
+        return Err(AppError("文件不存在".into()));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut command = std::process::Command::new("explorer");
+        // /select, 后紧跟完整路径，资源管理器会选中该文件
+        command.arg(format!("/select,{}", p.to_string_lossy())).creation_flags(CREATE_NO_WINDOW);
+        command.spawn()?;
+    }
+    #[cfg(target_os = "macos")]
+    std::process::Command::new("open").arg("-R").arg(&p).spawn()?;
+    #[cfg(target_os = "linux")]
+    {
+        let parent = p.parent().unwrap_or(&p);
+        std::process::Command::new("xdg-open").arg(parent).spawn()?;
+    }
+    Ok(())
+}
+
+/// 把本轮生成的文件写入指定会话最后一条助手消息，随会话持久化，避免切换后丢失。
+#[tauri::command]
+pub fn record_message_files(state: State<'_, AppState>, session_id: String, files: Vec<GeneratedFile>) -> Result<()> {
+    if files.is_empty() {
+        return Ok(());
+    }
+    let mut sessions = state.sessions.lock().unwrap();
+    if let Some(session) = sessions.iter_mut().find(|s| s.id == session_id) {
+        if let Some(last) = session.messages.iter_mut().rev().find(|m| m.role == Role::Assistant) {
+            let mut merged = last.files.clone();
+            for file in files {
+                if merged.iter().any(|item| item.abs_path == file.abs_path) {
+                    continue;
+                }
+                merged.push(file);
+            }
+            last.files = merged;
+            session.updated_at = chrono::Utc::now().timestamp();
+        }
+    }
+    drop(sessions);
+    state.save_sessions()
 }
 
 // ---------- 审批 ----------

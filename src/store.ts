@@ -379,6 +379,14 @@ export const useChatStore = defineStore('chat', () => {
         }
       }, skillNames, continueMessageId);
       sessions.value = await api.listSessions();
+      // 把本轮生成的文件写入最后一条助手消息，随会话持久化，切换/重启不丢失
+      const roundFiles = streamFiles.value[sid] ?? [];
+      if (roundFiles.length) {
+        try {
+          await api.recordMessageFiles(sid, roundFiles);
+          sessions.value = await api.listSessions();
+        } catch { /* 记录失败不影响对话本身 */ }
+      }
       await refreshUsage();
     } catch (e: any) {
       const msg = typeof e === 'string' ? e : e?.message ?? String(e);

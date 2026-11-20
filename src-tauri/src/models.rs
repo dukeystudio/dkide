@@ -195,7 +195,17 @@ pub struct Message {
     /// 正文是否因输出长度上限被截断（可用于提示"继续生成"）
     #[serde(default, skip_serializing_if = "is_false")]
     pub truncated: bool,
+    /// 本轮生成/修改的文件，随消息持久化，避免会话切换后丢失
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<GeneratedFile>,
     pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeneratedFile {
+    pub path: String,
+    pub abs_path: String,
+    pub kind: String,
 }
 
 fn is_false(v: &bool) -> bool { !*v }
@@ -211,6 +221,7 @@ impl Message {
             tool_calls: None,
             tool_call_id: None,
             truncated: false,
+            files: Vec::new(),
             created_at: chrono::Utc::now().timestamp(),
         }
     }
@@ -225,6 +236,7 @@ impl Message {
             tool_calls: None,
             tool_call_id: None,
             truncated,
+            files: Vec::new(),
             created_at: chrono::Utc::now().timestamp(),
         }
     }
