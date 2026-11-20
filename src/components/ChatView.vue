@@ -584,19 +584,7 @@ async function onBubbleClick(e: MouseEvent) {
         </div>
 
         <div v-for="(m, mi) in session?.messages" :key="m.id" class="msg" :class="m.role">
-          <div class="msg-avatar">{{ m.role === 'user' ? '我' : 'AI' }}</div>
           <div class="msg-body">
-            <div class="msg-name">
-              {{ m.role === 'user' ? '你' : '助手' }}
-              <div class="msg-actions">
-                <button @click="copyMessage(m)">{{ copiedId === m.id ? '已复制' : '复制' }}</button>
-                <button v-if="m.role === 'assistant'" @click="store.regenerate(mi)">重新生成</button>
-                <button v-if="m.role === 'assistant' && m.truncated && mi === (session?.messages.length ?? 0) - 1" class="continue-btn" title="从中断处接着写" @click="store.continueGeneration(mi)">继续生成</button>
-                <button @click="startEdit(m)">编辑</button>
-                <button v-if="m.role === 'user'" title="撤销到此：删除该条提问及其后所有回复" @click="store.undo(m.id)">↩ 撤销到此</button>
-                <button @click="store.deleteMessage(store.currentId!, m.id)">删除</button>
-              </div>
-            </div>
             <div v-if="editingId === m.id" class="edit-box">
               <textarea v-model="editContent" class="inline-input" style="min-height:80px;"></textarea>
               <div style="display:flex;gap:8px;margin-top:6px;align-items:center;">
@@ -619,14 +607,21 @@ async function onBubbleClick(e: MouseEvent) {
                 <span>⚠️ 内容因输出长度上限中断，并非完整回答。</span>
                 <button v-if="mi === (session?.messages.length ?? 0) - 1" class="continue-btn" @click="store.continueGeneration(mi)">继续生成 →</button>
               </div>
+              <div class="msg-actions">
+                <button @click="copyMessage(m)">{{ copiedId === m.id ? '已复制' : '复制' }}</button>
+                <button v-if="m.role === 'assistant'" @click="store.regenerate(mi)">重新生成</button>
+                <button v-if="m.role === 'assistant' && m.truncated && mi === (session?.messages.length ?? 0) - 1" class="continue-btn" title="从中断处接着写" @click="store.continueGeneration(mi)">继续生成</button>
+                <button @click="startEdit(m)">编辑</button>
+                <button v-if="m.role === 'user'" title="撤销到此：删除该条提问及其后所有回复" @click="store.undo(m.id)">↩ 撤销到此</button>
+                <button @click="store.deleteMessage(store.currentId!, m.id)">删除</button>
+              </div>
             </template>
           </div>
         </div>
 
         <div v-if="streaming" class="msg assistant">
-          <div class="msg-avatar">AI</div>
           <div class="msg-body">
-            <div class="msg-name">助手 <span class="stream-elapsed">已处理 {{ generationElapsed }}</span></div>
+            <div class="stream-elapsed">已处理 {{ generationElapsed }}</div>
             <div v-if="!streamBlocks.length" class="stream-placeholder">正在思考…</div>
             <template v-for="block in streamBlocks" :key="block.id">
               <div v-if="block.kind === 'text'" class="stream-text" v-html="md(block.text || '')"></div>
